@@ -5,7 +5,8 @@ with every local optimum explicitly highlighted.
 
 Usage:
     python plot_landscape.py <landscape.csv> [--save <output_dir>]
-    python plot_landscape.py data/*.csv --save figures
+    python plot_landscape.py output/*.csv --save figures
+    python plot_landscape.py --triangle --save figures
 
 The CSV is produced by:  ./build/main <file.h5> --export landscape.csv
 """
@@ -15,11 +16,11 @@ import os
 import sys
 
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 – registers 3D projection
+from matplotlib import cm
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.manifold import TSNE
 
 sns.set_theme(style="whitegrid", context="talk", palette="viridis")
 
@@ -35,6 +36,7 @@ def find_local_optima(df: pd.DataFrame, n_features: int,
     fitness is also counted as an optimum.
     """
     fitness = dict(zip(df["index"].values, df["mean_accuracy"].values))
+    min_index = int(df["index"].min())
     max_index = (1 << n_features) - 1
     is_optimum = np.zeros(len(df), dtype=bool)
 
@@ -44,7 +46,7 @@ def find_local_optima(df: pd.DataFrame, n_features: int,
         strictly_better = False
         for bit in range(n_features):
             nb = idx ^ (1 << bit)
-            if nb < 1 or nb > max_index:
+            if nb < min_index or nb > max_index:
                 continue
             nb_fit = fitness.get(nb)
             if nb_fit is None:
@@ -128,7 +130,7 @@ def plot_fdc(df: pd.DataFrame, lo_mask: np.ndarray,
                linewidths=0.3, label="local optima")
 
     corr = np.corrcoef(distances, df["mean_accuracy"])[0, 1]
-    ax.set_xlabel(f"Hamming distance to global optimum")
+    ax.set_xlabel("Hamming distance to global optimum")
     ax.set_ylabel("Mean accuracy")
     ax.set_title(f"Fitness-Distance Correlation  (r = {corr:.3f})")
     ax.legend(fontsize="x-small", markerscale=1.5)
@@ -140,21 +142,19 @@ def plot_fdc(df: pd.DataFrame, lo_mask: np.ndarray,
 
 def plot_optima_summary(df: pd.DataFrame, lo_mask: np.ndarray,
                         n_features: int, ax: plt.Axes):
+    min_k = int(df["num_features"].min())
     total_by_k = df.groupby("num_features").size()
     optima_by_k = df[lo_mask].groupby("num_features").size()
-    ks = range(1, n_features + 1)
+    ks = range(min_k, n_features + 1)
 
     total_vals = [total_by_k.get(k, 0) for k in ks]
     optima_vals = [optima_by_k.get(k, 0) for k in ks]
     pct = [100.0 * o / t if t > 0 else 0 for o, t in zip(optima_vals, total_vals)]
 
-    color_all = "steelblue"
-    color_lo = "red"
-
-    bars_all = ax.bar(list(ks), total_vals, color=color_all, alpha=0.4,
-                      label="total combinations")
-    bars_lo = ax.bar(list(ks), optima_vals, color=color_lo, alpha=0.7,
-                     label="local optima")
+    ax.bar(list(ks), total_vals, color="steelblue", alpha=0.4,
+           label="total combinations")
+    ax.bar(list(ks), optima_vals, color="red", alpha=0.7,
+           label="local optima")
 
     ax2 = ax.twinx()
     ax2.plot(list(ks), pct, "ko-", markersize=4, linewidth=1.2, label="% local optima")
@@ -171,82 +171,97 @@ def plot_optima_summary(df: pd.DataFrame, lo_mask: np.ndarray,
               fontsize="x-small", loc="upper left")
 
 
-# ── Plot 5: 3D t-SNE landscape surface ────────────────────────────────────────
+# ── Plot 5: 3D Hinged Bitstring Map ──────────────────────────────────────────
 
-def _index_to_bitvectors(indices: np.ndarray, n_features: int) -> np.ndarray:
-    """Convert an array of integer indices to an (n, n_features) binary matrix."""
-    bits = np.zeros((len(indices), n_features), dtype=np.float32)
-    for b in range(n_features):
-        bits[:, b] = (indices >> b) & 1
-    return bits
+def _gray_decode(g: int) -> int:
+    """Convert a Gray-code value back to the binary integer it encodes."""
+    n = g
+    mask = n >> 1
+    while mask:
+        n ^= mask
+        mask >>= 1
+    return n
 
 
-def plot_3d_tsne(df: pd.DataFrame, lo_mask: np.ndarray,
-                 n_features: int, stem: str, n_lo: int,
-                 save_dir: str | None, max_points: int = 15000):
-    """Produce a standalone 3D figure: t-SNE x/y, fitness z.
+def _build_bitstring_grid(df: pd.DataFrame, n_features: int):
+    """Map every bitstring index onto a 2D grid via hinged Gray-code ordering."""
+    n_x = n_features // 2
+    n_y = n_features - n_x
+    width = 1 << n_x
+    height = 1 << n_y
+    x_mask = width - 1
 
-    For large landscapes the surface triangulation can exhaust memory, so we
-    subsample down to *max_points* while always keeping every local optimum.
-    """
-    if len(df) > max_points:
-        lo_idx_set = set(np.where(lo_mask)[0])
-        non_lo = np.array([i for i in range(len(df)) if i not in lo_idx_set])
-        rng = np.random.default_rng(42)
-        keep_non_lo = rng.choice(
-            non_lo, size=max_points - len(lo_idx_set), replace=False)
-        keep = np.sort(np.concatenate([np.array(list(lo_idx_set)), keep_non_lo]))
-        df_sub = df.iloc[keep].reset_index(drop=True)
-        lo_mask_sub = np.isin(keep, list(lo_idx_set))
-        print(f"    Subsampled {len(df)} -> {len(df_sub)} points for 3D plot "
-              f"(all {len(lo_idx_set)} local optima retained)")
-    else:
-        df_sub = df
-        lo_mask_sub = lo_mask
+    fitness_lookup = dict(zip(df["index"].values, df["mean_accuracy"].values))
+    lo_set = set(df.loc[df["_is_lo"], "index"].values) if "_is_lo" in df.columns else set()
 
-    print("    Running t-SNE (metric=hamming) ...")
-    bit_matrix = _index_to_bitvectors(df_sub["index"].values, n_features)
-    perplexity = min(30, len(df_sub) - 1)
-    embedding = TSNE(
-        n_components=2,
-        metric="hamming",
-        perplexity=perplexity,
-        random_state=42,
-        init="random",
-    ).fit_transform(bit_matrix)
+    Z = np.full((height, width), np.nan)
+    lo_grid = np.zeros((height, width), dtype=bool)
 
-    x = embedding[:, 0]
-    y = embedding[:, 1]
-    z = df_sub["mean_accuracy"].values
+    for idx, acc in fitness_lookup.items():
+        x_bits = idx & x_mask
+        y_bits = idx >> n_x
+        gx = _gray_decode(x_bits)
+        gy = _gray_decode(y_bits)
+        Z[gy, gx] = acc
+        if idx in lo_set:
+            lo_grid[gy, gx] = True
+
+    gx_coords = np.arange(width)
+    gy_coords = np.arange(height)
+
+    return Z, lo_grid, gx_coords, gy_coords, n_x, n_y
+
+
+def plot_3d_bitstring_map(df: pd.DataFrame, lo_mask: np.ndarray,
+                          n_features: int, stem: str, n_lo: int,
+                          save_dir: str | None):
+    """3D surface on a hinged bitstring map grid, with local optima in red."""
+    df = df.copy()
+    df["_is_lo"] = lo_mask
+
+    Z, lo_grid, gx, gy, n_x, n_y = _build_bitstring_grid(df, n_features)
+
+    GX, GY = np.meshgrid(gx, gy)
+    Z_plot = np.where(np.isnan(Z), 0.0, Z)
 
     fig = plt.figure(figsize=(14, 10))
     ax = fig.add_subplot(111, projection="3d")
 
-    surf = ax.plot_trisurf(
-        x, y, z,
-        cmap="viridis", alpha=0.6, edgecolor="none", linewidth=0,
+    norm = plt.Normalize(vmin=np.nanmin(Z), vmax=np.nanmax(Z))
+    colors = cm.viridis(norm(Z_plot))
+    colors[..., 3] = 0.8
+
+    ax.plot_surface(
+        GX, GY, Z_plot,
+        facecolors=colors,
+        rstride=1, cstride=1,
+        linewidth=0, antialiased=False,
+        shade=True,
     )
 
-    lo_idx = np.where(lo_mask_sub)[0]
-    if len(lo_idx) > 0:
+    lo_gy, lo_gx = np.where(lo_grid)
+    if len(lo_gx) > 0:
+        lo_z = Z[lo_gy, lo_gx]
         ax.scatter(
-            x[lo_idx], y[lo_idx], z[lo_idx],
-            s=40, color="red", edgecolors="darkred", linewidths=0.5,
-            zorder=10, label=f"local optima ({len(lo_idx)})",
+            lo_gx, lo_gy, lo_z + (np.nanmax(Z) - np.nanmin(Z)) * 0.01,
+            s=50, color="red", edgecolors="darkred", linewidths=0.6,
+            zorder=10, label=f"local optima ({n_lo})",
             depthshade=False,
         )
 
-    ax.set_xlabel("t-SNE 1")
-    ax.set_ylabel("t-SNE 2")
+    ax.set_xlabel(f"Gray-code X  (bits 0..{n_x-1})")
+    ax.set_ylabel(f"Gray-code Y  (bits {n_x}..{n_features-1})")
     ax.set_zlabel("Mean accuracy")
     ax.set_title(
-        f"{stem}  —  3D t-SNE Landscape\n"
+        f"{stem}  --  3D Hinged Bitstring Map\n"
         f"(N={n_features},  {n_lo} local optima)",
         fontsize=14, fontweight="bold",
     )
-    ax.legend(fontsize="small", loc="upper left")
+    if n_lo > 0:
+        ax.legend(fontsize="small", loc="upper left")
 
-    fig.colorbar(surf, ax=ax, shrink=0.5, label="Mean accuracy")
+    mappable = cm.ScalarMappable(norm=norm, cmap="viridis")
+    fig.colorbar(mappable, ax=ax, shrink=0.5, label="Mean accuracy")
     fig.tight_layout()
 
     if save_dir:
@@ -259,13 +274,49 @@ def plot_3d_tsne(df: pd.DataFrame, lo_mask: np.ndarray,
         plt.show()
 
 
+# ── Triangle (synthetic) landscape generator ─────────────────────────────────
+
+def triangle_fitness(b: int, m: int, s: int) -> float:
+    """Compute the triangle function for popcount b, parameters m and s."""
+    if b == 0:
+        return 0.0
+    ceil_bs = (b + s - 1) // s
+    if ceil_bs % 2 == 1:
+        if b % s == 0:
+            return float(m * s)
+        else:
+            return float(m * (b % s))
+    else:
+        return float(m * (ceil_bs * s - b))
+
+
+def generate_triangle_csv(n: int, m: int, s: int, csv_path: str) -> str:
+    """Generate CSV for the full triangle landscape (2^n entries, index 0..2^n-1)."""
+    rows = []
+    for idx in range(1 << n):
+        b = bin(idx).count("1")
+        fit = triangle_fitness(b, m, s)
+        bitmask = format(idx, f"0{n}b")
+        rows.append((idx, bitmask, b, fit, 0.0))
+
+    df = pd.DataFrame(rows, columns=["index", "bitmask", "num_features",
+                                      "mean_accuracy", "mean_time"])
+    os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+    df.to_csv(csv_path, index=False)
+    print(f"  Generated triangle landscape CSV: {csv_path}")
+    print(f"    n={n}, m={m}, s={s}, entries={len(df)}")
+    return csv_path
+
+
 # ── Per-file driver ──────────────────────────────────────────────────────────
 
 def visualise(csv_path: str, save_dir: str | None):
     df = pd.read_csv(csv_path)
-    for col in ("index", "num_features", "mean_accuracy", "mean_time"):
+    for col in ("index", "num_features", "mean_accuracy"):
         if col not in df.columns:
             sys.exit(f"Missing expected column '{col}' in {csv_path}")
+    if "mean_time" not in df.columns:
+        df["mean_time"] = 0.0
 
     n_features = int(np.log2(df["index"].max() + 1))
     print(f"  {os.path.basename(csv_path)}: {len(df)} combinations, "
@@ -297,7 +348,7 @@ def visualise(csv_path: str, save_dir: str | None):
     else:
         plt.show()
 
-    plot_3d_tsne(df, lo_mask, n_features, stem, n_lo, save_dir)
+    plot_3d_bitstring_map(df, lo_mask, n_features, stem, n_lo, save_dir)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -305,13 +356,34 @@ def visualise(csv_path: str, save_dir: str | None):
 def main():
     parser = argparse.ArgumentParser(
         description="Visualise fitness landscapes with local optima highlighted")
-    parser.add_argument("csv", nargs="+",
+    parser.add_argument("csv", nargs="*",
                         help="One or more CSVs exported by the C++ program")
     parser.add_argument("--save", default=None,
                         help="Directory to save PNGs instead of showing")
+    parser.add_argument("--triangle", action="store_true",
+                        help="Generate and visualise the synthetic triangle "
+                             "landscape (n=16, m=1, s=4 by default)")
+    parser.add_argument("--tri-n", type=int, default=16,
+                        help="Triangle landscape: number of bits (default 16)")
+    parser.add_argument("--tri-m", type=int, default=1,
+                        help="Triangle landscape: m parameter (default 1)")
+    parser.add_argument("--tri-s", type=int, default=4,
+                        help="Triangle landscape: s parameter (default 4)")
     args = parser.parse_args()
 
-    for csv_path in args.csv:
+    csv_files = list(args.csv) if args.csv else []
+
+    if args.triangle:
+        out_dir = args.save or "output"
+        tri_csv = os.path.join(out_dir,
+            f"triangle_n{args.tri_n}_m{args.tri_m}_s{args.tri_s}.csv")
+        generate_triangle_csv(args.tri_n, args.tri_m, args.tri_s, tri_csv)
+        csv_files.append(tri_csv)
+
+    if not csv_files:
+        parser.error("Provide at least one CSV or use --triangle")
+
+    for csv_path in csv_files:
         print(f"Processing {csv_path} ...")
         visualise(csv_path, args.save)
 
