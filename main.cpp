@@ -54,8 +54,8 @@ void runLandscape(const std::string& hdf5_path, const std::string& csv_path) {
   const std::bitset<N> only_feature_0(1UL);
   const std::bitset<N> all_features((std::size_t{1} << N) - 1);
 
-  auto [acc1, time1] = landscape.fitness(only_feature_0);
-  auto [acc_all, time_all] = landscape.fitness(all_features);
+  auto [acc1, time1, penalty] = landscape.fitness(only_feature_0);
+  auto [acc_all, time_all, penalty_all] = landscape.fitness(all_features);
 
   std::cout << "Loaded: " << hdf5_path << '\n';
   std::cout << "Detected features: " << N << '\n';

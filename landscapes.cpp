@@ -18,31 +18,44 @@ using std::size_t;
 using std::vector;
 using std::string;
 
+struct Fitness {
+  double accuracy;
+  double mean_time;
+  double penalty;
+};
+
 template <size_t N>
 class Landscape {
  public:
-  virtual pair<double, double> fitness(bitset<N> gene) const = 0;
+  virtual Fitness fitness(bitset<N> gene) const = 0;
   virtual ~Landscape() = default;
 };
+
 
 // ── HDF5 Feature-Selection Landscape ────────────────────────────────────────
 
 template <size_t N>
 class HDF5Landscape : public Landscape<N> {
+  private:
+    double epsilon;
+
  public:
   explicit HDF5Landscape(
       const string& hdf5_path,
+      double epsilon,
       bool is_feature_selection_landscape = true)
-      : is_feature_selection_landscape_(is_feature_selection_landscape) {
+      : epsilon(epsilon), is_feature_selection_landscape_(is_feature_selection_landscape) {
     static_assert(
         N < (sizeof(size_t) * 8),
         "N is too large to convert bitset to size_t index safely.");
     loadFromFile(hdf5_path);
   }
 
-  pair<double, double> fitness(bitset<N> gene) const override {
+  Fitness fitness(bitset<N> gene) const override {
     size_t idx = geneToIndex(gene);
-    return {mean_accuracy_[idx], mean_time_[idx]};
+    int nFeatures = gene.count();
+    double penalty = ((double) nFeatures/N) * epsilon;
+    return {mean_accuracy_[idx], mean_time_[idx], penalty};
   }
 
   double accuracy(bitset<N> gene) const {
@@ -209,24 +222,26 @@ class TriangleLandscape : public Landscape<N> {
  private:
   int m;
   int s;
+  double epsilon;
 
  public:
-  TriangleLandscape(int m, int s) : m(m), s(s) {}
+  TriangleLandscape(int m, int s, double epsilon) : m(m), s(s), epsilon(epsilon) {}
 
-  pair<double, double> fitness(bitset<N> gene) const override {
+  Fitness fitness(bitset<N> gene) const override {
     int b = gene.count();
     int ceil = (b + s - 1) / s;
 
-    double penalty = 0.0;
+    int nFeatures = gene.count();
+    double penalty = ((double) nFeatures/N) * epsilon;
 
     if (ceil % 2 == 1) {
       if (b % s == 0) {
-        return {m * s, penalty};
+        return {m * s, 0.0, penalty};
       } else {
-        return {m * (b % s), penalty};
+        return {m * (b % s), 0.0, penalty};
       }
     } else {
-      return {m * (ceil * s - b), penalty};
+      return {m * (ceil * s - b), 0.0, penalty};
     }
   }
 };
