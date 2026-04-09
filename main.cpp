@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "landscapes.hpp"
+#include "landscapes.cpp"
 
 namespace {
 
