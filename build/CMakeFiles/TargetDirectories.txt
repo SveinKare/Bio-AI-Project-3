@@ -1,3 +1,0 @@
-C:/Users/svein/projects/bio-ai/ov3/Bio-AI-Project-3/build/CMakeFiles/main.dir
-C:/Users/svein/projects/bio-ai/ov3/Bio-AI-Project-3/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/svein/projects/bio-ai/ov3/Bio-AI-Project-3/build/CMakeFiles/ZERO_CHECK.dir
