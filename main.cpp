@@ -3,7 +3,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
-
+#include <cmath>
+#include <fstream>
 #include "landscapes.cpp"
 
 namespace {
@@ -20,6 +21,7 @@ std::size_t inferFeatureCountFromFile(
   if (dataspace.getSimpleExtentNdims() != 2) {
     throw std::runtime_error("Dataset 'accuracies' must be 2D.");
   }
+  file.close();
 
   hsize_t dims[2];
   dataspace.getSimpleExtentDims(dims, nullptr);
