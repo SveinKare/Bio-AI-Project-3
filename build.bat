@@ -2,27 +2,19 @@
 echo Creating build directory...
 if not exist build mkdir build
 
-echo Configuring CMake...
-cd build
-cmake ..
-if errorlevel 1 (
-    echo CMake configuration failed!
-    cd ..
-    pause
-    exit /b 1
-)
-
 echo Building project...
-cmake --build .
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
+cmake --build build
+
+@echo off
 if errorlevel 1 (
     echo Build failed!
-    cd ..
     pause
     exit /b 1
 )
 
 echo Running executable...
 REM Go back to project root before running
-cd ..
 build\Debug\main.exe
 pause
+

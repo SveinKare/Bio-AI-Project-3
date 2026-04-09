@@ -1,0 +1,10 @@
+{
+    "name": "bio-ai-project-3",
+    "version": "0.1.0",
+    "dependencies": [
+        {
+            "name": "hdf5",
+            "features": ["cpp"]
+        }
+    ]
+}
