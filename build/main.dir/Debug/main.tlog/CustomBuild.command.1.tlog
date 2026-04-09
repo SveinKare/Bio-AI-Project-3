@@ -1,0 +1,10 @@
+^C:\USERS\SVEIN\PROJECTS\BIO-AI\OV3\BIO-AI-PROJECT-3\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/svein/projects/bio-ai/ov3/Bio-AI-Project-3 -BC:/Users/svein/projects/bio-ai/ov3/Bio-AI-Project-3/build --check-stamp-file C:/Users/svein/projects/bio-ai/ov3/Bio-AI-Project-3/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
