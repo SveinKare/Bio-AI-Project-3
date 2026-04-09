@@ -1,61 +1,76 @@
+#pragma once
+
 #include <H5Cpp.h>
 
 #include <bitset>
 #include <cstddef>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-template <std::size_t N>
+using std::pair;
+using std::bitset;
+using std::size_t;
+using std::vector;
+using std::string;
+
+template <size_t N>
 class Landscape {
  public:
-  virtual double fitness(std::bitset<N> gene) const = 0;
+  virtual pair<double, double> fitness(bitset<N> gene) const = 0;
   virtual ~Landscape() = default;
 };
 
-template <std::size_t N>
+// ── HDF5 Feature-Selection Landscape ────────────────────────────────────────
+
+template <size_t N>
 class HDF5Landscape : public Landscape<N> {
  public:
   explicit HDF5Landscape(
-      const std::string& hdf5_path,
+      const string& hdf5_path,
       bool is_feature_selection_landscape = true)
       : is_feature_selection_landscape_(is_feature_selection_landscape) {
     static_assert(
-        N < (sizeof(std::size_t) * 8),
+        N < (sizeof(size_t) * 8),
         "N is too large to convert bitset to size_t index safely.");
-
     loadFromFile(hdf5_path);
   }
 
-  double fitness(std::bitset<N> gene) const override {
-    return fitnessByIndex(geneToIndex(gene));
+  pair<double, double> fitness(bitset<N> gene) const override {
+    size_t idx = geneToIndex(gene);
+    return {mean_accuracy_[idx], mean_time_[idx]};
   }
 
-  double meanTime(std::bitset<N> gene) const {
-    return timeByIndex(geneToIndex(gene));
+  double accuracy(bitset<N> gene) const {
+    return mean_accuracy_[geneToIndex(gene)];
   }
 
-  double fitnessByIndex(std::size_t index) const {
+  double meanTime(bitset<N> gene) const {
+    return mean_time_[geneToIndex(gene)];
+  }
+
+  double accuracyByIndex(size_t index) const {
     if (index >= mean_accuracy_.size()) {
       throw std::out_of_range("Fitness index out of range.");
     }
     return mean_accuracy_[index];
   }
 
-  double timeByIndex(std::size_t index) const {
+  double timeByIndex(size_t index) const {
     if (index >= mean_time_.size()) {
       throw std::out_of_range("Time index out of range.");
     }
     return mean_time_[index];
   }
 
-  const std::vector<double>& meanAccuracies() const { return mean_accuracy_; }
-  const std::vector<double>& meanTimes() const { return mean_time_; }
+  const vector<double>& meanAccuracies() const { return mean_accuracy_; }
+  const vector<double>& meanTimes() const { return mean_time_; }
 
-  void exportToCSV(const std::string& csv_path) const {
+  void exportToCSV(const string& csv_path) const {
     std::ofstream out(csv_path);
     if (!out.is_open()) {
       throw std::runtime_error("Cannot open CSV file for writing: " + csv_path);
@@ -64,9 +79,9 @@ class HDF5Landscape : public Landscape<N> {
     out << "index,bitmask,num_features,mean_accuracy,mean_time\n";
     out << std::setprecision(10);
 
-    const std::size_t start = is_feature_selection_landscape_ ? 1 : 0;
-    for (std::size_t i = start; i < mean_accuracy_.size(); ++i) {
-      std::bitset<N> bits(i);
+    const size_t start = is_feature_selection_landscape_ ? 1 : 0;
+    for (size_t i = start; i < mean_accuracy_.size(); ++i) {
+      bitset<N> bits(i);
       out << i << ','
           << bits.to_string() << ','
           << bits.count() << ','
@@ -77,21 +92,21 @@ class HDF5Landscape : public Landscape<N> {
 
  private:
   bool is_feature_selection_landscape_;
-  std::vector<double> mean_accuracy_;
-  std::vector<double> mean_time_;
+  vector<double> mean_accuracy_;
+  vector<double> mean_time_;
 
-  static std::size_t geneToIndex(const std::bitset<N>& gene) {
-    std::size_t idx = 0;
-    for (std::size_t b = 0; b < N; ++b) {
+  static size_t geneToIndex(const bitset<N>& gene) {
+    size_t idx = 0;
+    for (size_t b = 0; b < N; ++b) {
       if (gene.test(b)) {
-        idx |= (std::size_t{1} << b);
+        idx |= (size_t{1} << b);
       }
     }
     return idx;
   }
 
-  static std::pair<std::vector<float>, std::pair<std::size_t, std::size_t>>
-  read2DFloatDataset(const H5::H5File& file, const std::string& dataset_name) {
+  static pair<vector<float>, pair<size_t, size_t>>
+  read2DFloatDataset(const H5::H5File& file, const string& dataset_name) {
     H5::DataSet dataset = file.openDataSet(dataset_name);
     H5::DataSpace dataspace = dataset.getSpace();
 
@@ -105,20 +120,20 @@ class HDF5Landscape : public Landscape<N> {
 
     hsize_t dims[expected_rank];
     dataspace.getSimpleExtentDims(dims, nullptr);
-    const std::size_t rows = static_cast<std::size_t>(dims[0]);
-    const std::size_t cols = static_cast<std::size_t>(dims[1]);
+    const size_t rows = static_cast<size_t>(dims[0]);
+    const size_t cols = static_cast<size_t>(dims[1]);
 
-    std::vector<float> values(rows * cols);
+    vector<float> values(rows * cols);
     dataset.read(values.data(), H5::PredType::NATIVE_FLOAT);
     return {std::move(values), {rows, cols}};
   }
 
-  void loadFromFile(const std::string& hdf5_path) {
-    const std::size_t expected_combinations =
-        is_feature_selection_landscape_ ? ((std::size_t{1} << N) - 1)
-                                        : (std::size_t{1} << N);
-    const std::size_t output_size = std::size_t{1} << N;
-    const std::size_t index_offset = is_feature_selection_landscape_ ? 1 : 0;
+  void loadFromFile(const string& hdf5_path) {
+    const size_t expected_combinations =
+        is_feature_selection_landscape_ ? ((size_t{1} << N) - 1)
+                                        : (size_t{1} << N);
+    const size_t output_size = size_t{1} << N;
+    const size_t index_offset = is_feature_selection_landscape_ ? 1 : 0;
 
     H5::H5File file(hdf5_path, H5F_ACC_RDONLY);
 
@@ -130,12 +145,12 @@ class HDF5Landscape : public Landscape<N> {
           "Datasets 'accuracies' and 'times' do not have matching dimensions.");
     }
 
-    const std::size_t rows = acc_dims.first;
-    const std::size_t cols = acc_dims.second;
+    const size_t rows = acc_dims.first;
+    const size_t cols = acc_dims.second;
 
-    std::size_t combo_axis = 0;
-    std::size_t combinations = 0;
-    std::size_t instances = 0;
+    size_t combo_axis = 0;
+    size_t combinations = 0;
+    size_t instances = 0;
 
     if (rows == expected_combinations && cols != expected_combinations) {
       combo_axis = 0;
@@ -160,13 +175,13 @@ class HDF5Landscape : public Landscape<N> {
     mean_accuracy_.assign(output_size, 0.0);
     mean_time_.assign(output_size, 0.0);
 
-    for (std::size_t combo = 0; combo < combinations; ++combo) {
+    for (size_t combo = 0; combo < combinations; ++combo) {
       double acc_sum = 0.0;
       double time_sum = 0.0;
 
-      for (std::size_t instance = 0; instance < instances; ++instance) {
-        std::size_t row = 0;
-        std::size_t col = 0;
+      for (size_t instance = 0; instance < instances; ++instance) {
+        size_t row = 0;
+        size_t col = 0;
         if (combo_axis == 0) {
           row = combo;
           col = instance;
@@ -175,74 +190,43 @@ class HDF5Landscape : public Landscape<N> {
           col = combo;
         }
 
-        const std::size_t flat_index = row * cols + col;
+        const size_t flat_index = row * cols + col;
         acc_sum += static_cast<double>(acc_values[flat_index]);
         time_sum += static_cast<double>(time_values[flat_index]);
       }
 
-      const std::size_t table_index = combo + index_offset;
+      const size_t table_index = combo + index_offset;
       mean_accuracy_[table_index] = acc_sum / static_cast<double>(instances);
       mean_time_[table_index] = time_sum / static_cast<double>(instances);
     }
   }
 };
 
-template <std::size_t N>
+// ── Synthetic Triangle Landscape ────────────────────────────────────────────
+
+template <size_t N>
 class TriangleLandscape : public Landscape<N> {
  private:
-  int n_;
-  int m_;
-  int s_;
+  int m;
+  int s;
 
  public:
-  TriangleLandscape(int n, int m, int s) : n_(n), m_(m), s_(s) {}
+  TriangleLandscape(int m, int s) : m(m), s(s) {}
 
-  double fitness(std::bitset<N> gene) const override {
-    // Placeholder for the synthetic triangle landscape objective.
-    // This keeps the class usable while you implement the final formula.
-    (void)gene;
-    (void)n_;
-    (void)m_;
-    (void)s_;
-    return 0.0;
-  }
-};
+  pair<double, double> fitness(bitset<N> gene) const override {
+    int b = gene.count();
+    int ceil = (b + s - 1) / s;
 
-#include <bitset>
+    double penalty = 0.0;
 
-using namespace std;
-
-template<size_t N>
-class Landscape {
-  public:
-    virtual pair<double, double> fitness(bitset<N> gene) const = 0;
-    virtual ~Landscape() = default;
-};
-
-template<size_t N>
-class TriangleLandscape : public Landscape<N> {
-  private:
-    int m;
-    int s;
-  public:
-    TriangleLandscape(int m, int s): m(m), s(s) {};
-
-    pair<double, double> fitness(bitset<N> gene) const override {
-      int b = gene.count();
-      int ceil = (b + s - 1) / s; // Cpp trick to get ceiling of integer division
-
-      double penalty = 0.0; // Change later if needed
-
-      // Triangle func
-      if (ceil % 2 == 1) {
-        // g(b)
-        if (b % s == 0) {
-          return { m*s, penalty };
-        } else {
-          return { m*(b % s), penalty };
-        }
+    if (ceil % 2 == 1) {
+      if (b % s == 0) {
+        return {m * s, penalty};
       } else {
-        return { m*(ceil*s - b), penalty };
+        return {m * (b % s), penalty};
       }
+    } else {
+      return {m * (ceil * s - b), penalty};
     }
+  }
 };

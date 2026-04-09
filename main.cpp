@@ -52,14 +52,14 @@ void runLandscape(const std::string& hdf5_path, const std::string& csv_path) {
   const std::bitset<N> only_feature_0(1UL);
   const std::bitset<N> all_features((std::size_t{1} << N) - 1);
 
+  auto [acc1, time1] = landscape.fitness(only_feature_0);
+  auto [acc_all, time_all] = landscape.fitness(all_features);
+
   std::cout << "Loaded: " << hdf5_path << '\n';
   std::cout << "Detected features: " << N << '\n';
-  std::cout << "Mean accuracy for index 1: "
-            << landscape.fitness(only_feature_0) << '\n';
-  std::cout << "Mean time for index 1: "
-            << landscape.meanTime(only_feature_0) << '\n';
-  std::cout << "Mean accuracy for all features: "
-            << landscape.fitness(all_features) << '\n';
+  std::cout << "Mean accuracy for index 1: " << acc1 << '\n';
+  std::cout << "Mean time for index 1: " << time1 << '\n';
+  std::cout << "Mean accuracy for all features: " << acc_all << '\n';
 
   if (!csv_path.empty()) {
     landscape.exportToCSV(csv_path);

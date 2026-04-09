@@ -12,7 +12,7 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 # Add your executable
-add_executable(main main.cpp landscapes.cpp)
+add_executable(main main.cpp)
 
 
 find_package(HDF5 REQUIRED COMPONENTS C CXX)
