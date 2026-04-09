@@ -13,8 +13,11 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 # Add your executable
 add_executable(main main.cpp landscapes.cpp)
+<<<<<<< HEAD
 
 find_package(HDF5 REQUIRED COMPONENTS C CXX)
 target_include_directories(main PRIVATE ${HDF5_INCLUDE_DIRS})
 target_link_libraries(main PRIVATE ${HDF5_LIBRARIES})
+=======
+>>>>>>> refs/remotes/origin/main
 
