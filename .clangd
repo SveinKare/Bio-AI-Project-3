@@ -1,0 +1,16 @@
+CompileFlags:
+  Add:
+    - "-std=c++17"
+    - "-IC:/Users/svein/projects/bio-ai/ov3/Bio-AI-Project-3/build/vcpkg_installed/x64-windows/include"
+    - "-EHsc"
+    - "-DNDEBUG"
+  Compiler: cl.exe
+
+Diagnostics:
+  ClangTidy:
+    Add:
+      - modernize-*
+      - performance-*
+      - readability-*
+    Remove:
+      - modernize-use-trailing-return-type
