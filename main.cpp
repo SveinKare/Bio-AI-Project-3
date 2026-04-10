@@ -6,6 +6,8 @@
 #include <cmath>
 #include <fstream>
 #include "landscapes.cpp"
+#include "single_ga.cpp"
+#include <memory>
 
 namespace {
 
@@ -88,7 +90,7 @@ Args parseArgs(int argc, char** argv) {
 }
 
 }  // namespace
-
+/*
 int main(int argc, char** argv) {
   try {
     const Args args = parseArgs(argc, argv);
@@ -114,4 +116,66 @@ int main(int argc, char** argv) {
     std::cerr << "Error: " << ex.what() << '\n';
     return 1;
   }
+  }
+ */
+
+template <size_t N>
+void runExperiment(std::unique_ptr<Landscape<N>> landscape, const string& name, const string& landscapeCsv) {
+  SingleObjectiveGA<N> ga(
+      std::move(landscape),
+      200,  // popsize
+      50,   // generations
+      0.05,  // crossover
+      0.05,  // mutation
+      2,     // elites
+      3,     // kParents
+      1,      // crossover points
+      name
+  );
+  ga.init();
+  auto res = ga.run();
+  std::cout << name << " - Accuracy: " << res.getAccuracy() << " Bitstring: " << res.getGene() << std::endl;
+
+  std::ofstream out("pop_" + name + ".csv");
+  out << "id,fitness,niche" << std::endl;
+  auto niches = ga.findNiches();
+  for (size_t i = 0; i < niches.size(); i++) {
+    for (auto& ind : niches[i]) {
+      out << ind.getGene().to_ulong() << "," << ind.getAccuracy() << "," << i << std::endl;
+    }
+  }
+  out.close();
+}
+
+int main() {
+  double epsilon = 0.05;
+  // Triangle landscape (N=16)
+  {
+    auto landscape = std::make_unique<TriangleLandscape<16>>(1, 4, epsilon);
+    landscape->precompute("data/triangle.csv");
+    runExperiment<16>(std::move(landscape), "triangle", "data/triangle.csv");
+  }
+
+  // Breast cancer (check your feature count - likely N=9)
+  {
+    auto landscape = std::make_unique<HDF5Landscape<9>>("data/01-breast-w_lr_F.h5", epsilon);
+    landscape->exportToCSV("data/landscape_breast.csv");
+    runExperiment<9>(std::move(landscape), "breast", "data/landscape_breast.csv");
+  }
+
+  // Credit (likely N=15)
+  {
+    auto landscape = std::make_unique<HDF5Landscape<15>>("data/05-credit-a_rf_F.h5", epsilon);
+    landscape->exportToCSV("data/landscape_credit.csv");
+    runExperiment<15>(std::move(landscape), "credit", "data/landscape_credit.csv");
+  }
+
+  // Letter recognition (likely N=16)
+  {
+    auto landscape = std::make_unique<HDF5Landscape<16>>("data/08-letter-r_knn_F.h5", epsilon);
+    landscape->exportToCSV("data/landscape_letter.csv");
+    runExperiment<16>(std::move(landscape), "letter", "data/landscape_letter.csv");
+  }
+
+  return 0;
 }

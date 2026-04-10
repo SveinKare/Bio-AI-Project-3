@@ -223,25 +223,58 @@ class TriangleLandscape : public Landscape<N> {
   int m;
   int s;
   double epsilon;
+  bool precomputed = false;
+  vector<Fitness> table;
+
+  Fitness compute(bitset<N> gene) const {
+    int b = gene.count();
+    int ceil = (b + s - 1) / s;
+    int nFeatures = gene.count();
+    double penalty = ((double)nFeatures / N) * epsilon;
+    if (ceil % 2 == 1) {
+      if (b % s == 0) {
+        return {(double)(m * s), 0.0, penalty};
+      }
+      return {(double)(m * (b % s)), 0.0, penalty};
+    }
+    return {(double)(m * (ceil * s - b)), 0.0, penalty};
+  }
 
  public:
   TriangleLandscape(int m, int s, double epsilon) : m(m), s(s), epsilon(epsilon) {}
 
-  Fitness fitness(bitset<N> gene) const override {
-    int b = gene.count();
-    int ceil = (b + s - 1) / s;
+  void precompute(const string& path = "data/triangle.csv") {
+    const size_t total = size_t{1} << N;
+    table.resize(total);
 
-    int nFeatures = gene.count();
-    double penalty = ((double) nFeatures/N) * epsilon;
-
-    if (ceil % 2 == 1) {
-      if (b % s == 0) {
-        return {m * s, 0.0, penalty};
-      } else {
-        return {m * (b % s), 0.0, penalty};
+    std::ifstream in(path);
+    if (in.good()) {
+      string header;
+      std::getline(in, header);
+      size_t idx;
+      double acc, penalty;
+      char comma;
+      while (in >> idx >> comma >> acc >> comma >> penalty) {
+        table[idx] = {acc, 0.0, penalty};
       }
+      in.close();
     } else {
-      return {m * (ceil * s - b), 0.0, penalty};
+      std::ofstream out(path);
+      out << "index,accuracy,penalty" << std::endl;
+      for (size_t i = 0; i < total; i++) {
+        bitset<N> gene(i);
+        table[i] = compute(gene);
+        out << i << "," << table[i].accuracy << "," << table[i].penalty << std::endl;
+      }
+      out.close();
     }
+    precomputed = true;
+  }
+
+  Fitness fitness(bitset<N> gene) const override {
+    if (precomputed) {
+      return table[gene.to_ulong()];
+    }
+    return compute(gene);
   }
 };
