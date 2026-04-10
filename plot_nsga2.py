@@ -40,11 +40,28 @@ def load_pop(prefix: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-# ── Plot 1: Pareto front ────────────────────────────────────────────────────
+def load_snapshots(prefix: str) -> pd.DataFrame | None:
+    path = f"{prefix}_snapshots.csv"
+    if not os.path.exists(path):
+        return None
+    return pd.read_csv(path)
+
+
+# ── Plot 1: Pareto front with per-generation colour coding ───────────────────
 
 def plot_pareto_front(pareto: pd.DataFrame, pop: pd.DataFrame,
-                      ax: plt.Axes, stem: str):
-    if pop is not None:
+                      ax: plt.Axes, stem: str,
+                      snapshots: pd.DataFrame | None = None):
+    if snapshots is not None and not snapshots.empty:
+        max_gen = snapshots["generation"].max()
+        sc = ax.scatter(
+            snapshots["time"], snapshots["accuracy"],
+            c=snapshots["generation"], cmap="plasma",
+            s=6, alpha=0.25, vmin=0, vmax=max_gen,
+            rasterized=True, zorder=2)
+        cbar = ax.figure.colorbar(sc, ax=ax, pad=0.02, shrink=0.85)
+        cbar.set_label("Generation", fontsize=9)
+    elif pop is not None:
         dominated = pop[pop["rank"] > 0]
         ax.scatter(dominated["time"], dominated["accuracy"],
                    s=10, alpha=0.3, color="steelblue", label="dominated",
@@ -92,20 +109,33 @@ def plot_hypervolume(gens: pd.DataFrame, ax: plt.Axes, stem: str):
     ax.legend(fontsize="x-small")
 
 
-# ── Plot 4: Pareto front size + mean time ────────────────────────────────────
+# ── Plot 4: Adaptive mutation & diversity ─────────────────────────────────────
 
 def plot_diversity(gens: pd.DataFrame, ax: plt.Axes, stem: str):
-    ax.plot(gens["generation"], gens["pareto_size"],
-            "m-", linewidth=2, label="Pareto front size")
+    has_diversity = "diversity" in gens.columns
+    has_mutation = "mutation_rate" in gens.columns
+
+    if has_diversity:
+        ax.plot(gens["generation"], gens["diversity"],
+                "m-", linewidth=2, label="diversity (unique/pop)")
+        ax.set_ylabel("Diversity")
+    else:
+        ax.plot(gens["generation"], gens["pareto_size"],
+                "m-", linewidth=2, label="Pareto front size")
+        ax.set_ylabel("Pareto front size")
 
     ax2 = ax.twinx()
-    ax2.plot(gens["generation"], gens["mean_time"],
-             "c--", linewidth=1.5, alpha=0.7, label="mean time")
-    ax2.set_ylabel("Mean time", fontsize=12)
+    if has_mutation:
+        ax2.plot(gens["generation"], gens["mutation_rate"],
+                 "r--", linewidth=1.5, alpha=0.8, label="mutation rate")
+        ax2.set_ylabel("Mutation rate", fontsize=12)
+    else:
+        ax2.plot(gens["generation"], gens["mean_time"],
+                 "c--", linewidth=1.5, alpha=0.7, label="mean time")
+        ax2.set_ylabel("Mean time", fontsize=12)
 
     ax.set_xlabel("Generation")
-    ax.set_ylabel("Pareto front size")
-    ax.set_title(f"Diversity & Time -- {stem}")
+    ax.set_title(f"Adaptive Diversity -- {stem}")
 
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
@@ -120,6 +150,7 @@ def visualise_nsga2(prefix: str, save_dir: str | None):
     pareto = load_pareto(prefix)
     gens = load_gens(prefix)
     pop = load_pop(prefix)
+    snapshots = load_snapshots(prefix)
 
     print(f"  {stem}: Pareto front={len(pareto)}, generations={len(gens)}")
 
@@ -127,7 +158,7 @@ def visualise_nsga2(prefix: str, save_dir: str | None):
     fig.suptitle(f"NSGA-II Results -- {stem}",
                  fontsize=16, fontweight="bold")
 
-    plot_pareto_front(pareto, pop, axes[0, 0], stem)
+    plot_pareto_front(pareto, pop, axes[0, 0], stem, snapshots)
     plot_convergence(gens, axes[0, 1], stem)
     plot_hypervolume(gens, axes[1, 0], stem)
     plot_diversity(gens, axes[1, 1], stem)

@@ -5,11 +5,9 @@
 #include <bitset>
 #include <cstddef>
 #include <fstream>
-#include <functional>
 #include <iomanip>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 using std::pair;
@@ -236,12 +234,12 @@ class TriangleLandscape : public Landscape<N> {
 
     if (ceil % 2 == 1) {
       if (b % s == 0) {
-        return {m * s, 0.0, penalty};
+        return {static_cast<double>(m * s), 0.0, penalty};
       } else {
-        return {m * (b % s), 0.0, penalty};
+        return {static_cast<double>(m * (b % s)), 0.0, penalty};
       }
     } else {
-      return {m * (ceil * s - b), 0.0, penalty};
+      return {static_cast<double>(m * (ceil * s - b)), 0.0, penalty};
     }
   }
 };

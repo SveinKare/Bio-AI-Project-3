@@ -18,7 +18,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
-add_executable(main main.cpp landscapes.cpp)
+add_executable(main main.cpp)
 
 # Link HDF5 depending on platform
 if(WIN32)

@@ -1,12 +1,14 @@
+#pragma once
+
 #include <algorithm>
 #include <bitset>
-#include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
-#include <numeric>
 #include <random>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,25 +31,37 @@ struct GenerationStats {
   double mean_time;
   double hypervolume;
   int pareto_size;
+  double mutation_rate;
+  double diversity;
 };
 
 template <std::size_t N>
 class NSGA2 {
  public:
   struct Config {
-    int pop_size = 100;
-    int generations = 200;
+    int pop_size = static_cast<int>(2 * N * N);
+    int generations = 100;
     double crossover_rate = 0.9;
     double mutation_rate = 1.0 / static_cast<double>(N);
     unsigned seed = 42;
     bool maximize_first = true;
     bool minimize_second = true;
+
+    double diversity_low = 0.25;
+    double diversity_high = 0.50;
+    double mutation_boost = 1.5;
+    double mutation_decay = 0.95;
+    double mutation_max = 0.5;
   };
 
   using EvalFn = std::function<std::pair<double, double>(const std::bitset<N>&)>;
 
   NSGA2(EvalFn eval, Config cfg)
-      : eval_(std::move(eval)), cfg_(cfg), rng_(cfg.seed) {}
+      : eval_(std::move(eval)),
+        cfg_(cfg),
+        rng_(cfg.seed),
+        current_mutation_rate_(cfg.mutation_rate),
+        base_mutation_rate_(cfg.mutation_rate) {}
 
   void run() {
     population_ = initializePopulation();
@@ -67,7 +81,11 @@ class NSGA2 {
 
       population_ = selectNextGeneration(combined, fronts);
 
-      gen_stats_.push_back(computeStats(gen, population_, fronts));
+      double div = measureDiversity(population_);
+      adaptMutationRate(div);
+
+      gen_stats_.push_back(computeStats(gen, population_, fronts, div));
+      snapshots_.push_back(population_);
     }
 
     auto fronts = nonDominatedSort(population_);
@@ -111,7 +129,7 @@ class NSGA2 {
   void exportGenerationsCSV(const std::string& path) const {
     std::ofstream out(path);
     out << "generation,num_fronts,pareto_size,best_accuracy,min_time,"
-           "mean_accuracy,mean_time,hypervolume\n";
+           "mean_accuracy,mean_time,hypervolume,mutation_rate,diversity\n";
     out << std::setprecision(10);
 
     for (const auto& s : gen_stats_) {
@@ -122,7 +140,9 @@ class NSGA2 {
           << s.min_time << ','
           << s.mean_accuracy << ','
           << s.mean_time << ','
-          << s.hypervolume << '\n';
+          << s.hypervolume << ','
+          << s.mutation_rate << ','
+          << s.diversity << '\n';
     }
   }
 
@@ -143,12 +163,35 @@ class NSGA2 {
     }
   }
 
+  void exportSnapshotsCSV(const std::string& path) const {
+    std::ofstream out(path);
+    out << "generation,index,bitmask,num_features,accuracy,time,rank,crowding_distance\n";
+    out << std::setprecision(10);
+
+    for (std::size_t gen = 0; gen < snapshots_.size(); ++gen) {
+      for (const auto& ind : snapshots_[gen]) {
+        std::size_t idx = bitsetToIndex(ind.chromosome);
+        out << gen << ','
+            << idx << ','
+            << ind.chromosome.to_string() << ','
+            << ind.chromosome.count() << ','
+            << ind.obj_accuracy << ','
+            << ind.obj_time << ','
+            << ind.rank << ','
+            << ind.crowding_distance << '\n';
+      }
+    }
+  }
+
  private:
   EvalFn eval_;
   Config cfg_;
   std::mt19937 rng_;
+  double current_mutation_rate_;
+  double base_mutation_rate_;
   std::vector<Individual<N>> population_;
   std::vector<GenerationStats> gen_stats_;
+  std::vector<std::vector<Individual<N>>> snapshots_;
 
   static std::size_t bitsetToIndex(const std::bitset<N>& bs) {
     std::size_t idx = 0;
@@ -178,6 +221,25 @@ class NSGA2 {
       auto [acc, time] = eval_(ind.chromosome);
       ind.obj_accuracy = acc;
       ind.obj_time = time;
+    }
+  }
+
+  double measureDiversity(const std::vector<Individual<N>>& pop) const {
+    std::set<std::string> unique;
+    for (const auto& ind : pop) {
+      unique.insert(ind.chromosome.to_string());
+    }
+    return static_cast<double>(unique.size()) /
+           static_cast<double>(pop.size());
+  }
+
+  void adaptMutationRate(double diversity) {
+    if (diversity < cfg_.diversity_low) {
+      current_mutation_rate_ =
+          std::min(current_mutation_rate_ * cfg_.mutation_boost, cfg_.mutation_max);
+    } else if (diversity > cfg_.diversity_high) {
+      current_mutation_rate_ =
+          std::max(current_mutation_rate_ * cfg_.mutation_decay, base_mutation_rate_);
     }
   }
 
@@ -331,7 +393,7 @@ class NSGA2 {
   void mutate(Individual<N>& ind) {
     std::uniform_real_distribution<double> prob(0.0, 1.0);
     for (std::size_t b = 0; b < N; ++b) {
-      if (prob(rng_) < cfg_.mutation_rate) {
+      if (prob(rng_) < current_mutation_rate_) {
         ind.chromosome.flip(b);
       }
     }
@@ -426,10 +488,13 @@ class NSGA2 {
   GenerationStats computeStats(
       int gen,
       const std::vector<Individual<N>>& pop,
-      const std::vector<std::vector<int>>& fronts) const {
+      const std::vector<std::vector<int>>& fronts,
+      double diversity) const {
     GenerationStats s{};
     s.generation = gen;
     s.num_fronts = static_cast<int>(fronts.size());
+    s.mutation_rate = current_mutation_rate_;
+    s.diversity = diversity;
 
     double sum_acc = 0, sum_time = 0;
     s.best_accuracy = -std::numeric_limits<double>::infinity();
