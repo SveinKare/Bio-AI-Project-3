@@ -6,6 +6,7 @@
 
 #include "landscapes.cpp"
 #include "nsga2.cpp"
+#include "pso.cpp"
 
 namespace {
 
@@ -64,8 +65,10 @@ void runLandscape(const std::string& hdf5_path, const std::string& csv_path,
   }
 }
 
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
 template <std::size_t N>
-void printBestSolution(const std::vector<Individual<N>>& front) {
+void printBestNSGA2(const std::vector<Individual<N>>& front) {
   if (front.empty()) return;
 
   const auto& best = *std::max_element(front.begin(), front.end(),
@@ -73,12 +76,97 @@ void printBestSolution(const std::vector<Individual<N>>& front) {
         return a.obj_accuracy < b.obj_accuracy;
       });
 
-  std::cout << "\n  -- Best solution found --\n";
-  std::cout << "  Bitstring: " << best.chromosome.to_string() << '\n';
-  std::cout << "  Features:  " << best.chromosome.count() << " / " << N << '\n';
-  std::cout << "  Accuracy:  " << best.obj_accuracy << '\n';
-  std::cout << "  Time:      " << best.obj_time << '\n';
+  std::cout << "\n  -- Best solution found --\n"
+            << "  Bitstring: " << best.chromosome.to_string() << '\n'
+            << "  Features:  " << best.chromosome.count() << " / " << N << '\n'
+            << "  Accuracy:  " << best.obj_accuracy << '\n'
+            << "  Time:      " << best.obj_time << '\n';
 }
+
+template <std::size_t N>
+void printBestPSO(const Particle<N>& best) {
+  std::cout << "\n  -- Best solution found --\n"
+            << "  Bitstring: " << best.position.to_string() << '\n'
+            << "  Features:  " << best.position.count() << " / " << N << '\n'
+            << "  Fitness:   " << best.fitness << '\n'
+            << "  Accuracy:  " << best.obj_accuracy << '\n'
+            << "  Time:      " << best.obj_time << '\n';
+}
+
+template <typename Algo>
+void exportCSVs(Algo& algo, const std::string& prefix) {
+  algo.exportParetoCSV(prefix + "_pareto.csv");
+  algo.exportGenerationsCSV(prefix + "_gens.csv");
+  algo.exportPopulationCSV(prefix + "_pop.csv");
+  algo.exportSnapshotsCSV(prefix + "_snapshots.csv");
+
+  std::cout << "\n  Exported: " << prefix << "_pareto.csv\n"
+            << "  Exported: " << prefix << "_gens.csv\n"
+            << "  Exported: " << prefix << "_pop.csv\n"
+            << "  Exported: " << prefix << "_snapshots.csv\n";
+}
+
+// ── PSO runners ─────────────────────────────────────────────────────────────
+
+template <std::size_t N>
+void runPSO_HDF5(const std::string& hdf5_path,
+                 const std::string& out_prefix,
+                 double epsilon, unsigned seed) {
+  HDF5Landscape<N> landscape(hdf5_path, epsilon, true);
+
+  typename BinaryPSO<N>::Config cfg;
+  cfg.seed = seed;
+
+  BinaryPSO<N> pso(
+      [&landscape](const std::bitset<N>& chr) -> PSOEvalResult {
+        auto f = landscape.fitness(chr);
+        return {f.accuracy - f.penalty, f.accuracy, f.mean_time};
+      },
+      cfg);
+
+  std::cout << "Running Binary PSO on " << hdf5_path
+            << " (N=" << N
+            << ", swarm=" << cfg.swarm_size
+            << ", iters=" << cfg.iterations
+            << ", w=" << cfg.w_start << "->" << cfg.w_end
+            << ", c1=" << cfg.c1 << ", c2=" << cfg.c2
+            << ", seed=" << seed << ")\n";
+
+  pso.run();
+  printBestPSO<N>(pso.globalBest());
+  exportCSVs(pso, out_prefix);
+}
+
+template <std::size_t N>
+void runPSO_Triangle(const std::string& out_prefix,
+                     int m, int s,
+                     double epsilon, unsigned seed) {
+  TriangleLandscape<N> landscape(m, s, epsilon);
+
+  typename BinaryPSO<N>::Config cfg;
+  cfg.seed = seed;
+
+  BinaryPSO<N> pso(
+      [&landscape](const std::bitset<N>& chr) -> PSOEvalResult {
+        auto f = landscape.fitness(chr);
+        return {f.accuracy - f.penalty, f.accuracy,
+                static_cast<double>(chr.count())};
+      },
+      cfg);
+
+  std::cout << "Running Binary PSO on Triangle landscape"
+            << " (N=" << N << ", m=" << m << ", s=" << s
+            << ", swarm=" << cfg.swarm_size
+            << ", iters=" << cfg.iterations
+            << ", w=" << cfg.w_start << "->" << cfg.w_end
+            << ", seed=" << seed << ")\n";
+
+  pso.run();
+  printBestPSO<N>(pso.globalBest());
+  exportCSVs(pso, out_prefix);
+}
+
+// ── NSGA-II runners ─────────────────────────────────────────────────────────
 
 template <std::size_t N>
 void runNSGA2_HDF5(const std::string& hdf5_path,
@@ -91,14 +179,12 @@ void runNSGA2_HDF5(const std::string& hdf5_path,
   cfg.maximize_first = true;
   cfg.minimize_second = true;
 
-  // NSGA-II uses raw accuracy (no penalty) for true multi-objective optimisation
-  typename NSGA2<N>::EvalFn eval =
+  NSGA2<N> nsga(
       [&landscape](const std::bitset<N>& chr) -> std::pair<double, double> {
-    auto f = landscape.fitness(chr);
-    return {f.accuracy, f.mean_time};
-  };
-
-  NSGA2<N> nsga(eval, cfg);
+        auto f = landscape.fitness(chr);
+        return {f.accuracy, f.mean_time};
+      },
+      cfg);
 
   std::cout << "Running NSGA-II on " << hdf5_path
             << " (N=" << N
@@ -111,17 +197,8 @@ void runNSGA2_HDF5(const std::string& hdf5_path,
 
   auto front = nsga.paretoFront();
   std::cout << "  Pareto front size: " << front.size() << '\n';
-  printBestSolution<N>(front);
-
-  nsga.exportParetoCSV(out_prefix + "_pareto.csv");
-  nsga.exportGenerationsCSV(out_prefix + "_gens.csv");
-  nsga.exportPopulationCSV(out_prefix + "_pop.csv");
-  nsga.exportSnapshotsCSV(out_prefix + "_snapshots.csv");
-
-  std::cout << "\n  Exported: " << out_prefix << "_pareto.csv\n";
-  std::cout << "  Exported: " << out_prefix << "_gens.csv\n";
-  std::cout << "  Exported: " << out_prefix << "_pop.csv\n";
-  std::cout << "  Exported: " << out_prefix << "_snapshots.csv\n";
+  printBestNSGA2<N>(front);
+  exportCSVs(nsga, out_prefix);
 }
 
 template <std::size_t N>
@@ -135,15 +212,12 @@ void runNSGA2_Triangle(const std::string& out_prefix,
   cfg.maximize_first = true;
   cfg.minimize_second = true;
 
-  // NSGA-II uses raw accuracy (no penalty) for true multi-objective optimisation
-  typename NSGA2<N>::EvalFn eval =
+  NSGA2<N> nsga(
       [&landscape](const std::bitset<N>& chr) -> std::pair<double, double> {
-    auto f = landscape.fitness(chr);
-    double popcount = static_cast<double>(chr.count());
-    return {f.accuracy, popcount};
-  };
-
-  NSGA2<N> nsga(eval, cfg);
+        auto f = landscape.fitness(chr);
+        return {f.accuracy, static_cast<double>(chr.count())};
+      },
+      cfg);
 
   std::cout << "Running NSGA-II on Triangle landscape"
             << " (N=" << N << ", m=" << m << ", s=" << s
@@ -156,24 +230,18 @@ void runNSGA2_Triangle(const std::string& out_prefix,
 
   auto front = nsga.paretoFront();
   std::cout << "  Pareto front size: " << front.size() << '\n';
-  printBestSolution<N>(front);
-
-  nsga.exportParetoCSV(out_prefix + "_pareto.csv");
-  nsga.exportGenerationsCSV(out_prefix + "_gens.csv");
-  nsga.exportPopulationCSV(out_prefix + "_pop.csv");
-  nsga.exportSnapshotsCSV(out_prefix + "_snapshots.csv");
-
-  std::cout << "\n  Exported: " << out_prefix << "_pareto.csv\n";
-  std::cout << "  Exported: " << out_prefix << "_gens.csv\n";
-  std::cout << "  Exported: " << out_prefix << "_pop.csv\n";
-  std::cout << "  Exported: " << out_prefix << "_snapshots.csv\n";
+  printBestNSGA2<N>(front);
+  exportCSVs(nsga, out_prefix);
 }
+
+// ── CLI ─────────────────────────────────────────────────────────────────────
 
 struct Args {
   std::string hdf5_path = "data/01-breast-w_lr_F.h5";
   std::string csv_path;
   std::string out_prefix;
   bool run_nsga2 = false;
+  bool run_pso = false;
   bool run_triangle = false;
   double epsilon = 0.1;
   unsigned seed = 42;
@@ -187,6 +255,8 @@ Args parseArgs(int argc, char** argv) {
       args.csv_path = argv[++i];
     } else if (arg == "--nsga2") {
       args.run_nsga2 = true;
+    } else if (arg == "--pso") {
+      args.run_pso = true;
     } else if (arg == "--triangle") {
       args.run_triangle = true;
     } else if (arg == "--out" && i + 1 < argc) {
@@ -202,6 +272,29 @@ Args parseArgs(int argc, char** argv) {
   return args;
 }
 
+template <std::size_t N>
+void dispatch(const Args& args) {
+  const std::string& prefix = args.out_prefix;
+  if (args.run_triangle) {
+    if (args.run_pso)
+      runPSO_Triangle<N>(prefix.empty() ? "output/triangle" : prefix,
+                         1, 4, args.epsilon, args.seed);
+    else
+      runNSGA2_Triangle<N>(prefix.empty() ? "output/triangle" : prefix,
+                           1, 4, args.epsilon, args.seed);
+  } else if (args.run_pso) {
+    runPSO_HDF5<N>(args.hdf5_path,
+                   prefix.empty() ? "output/pso" : prefix,
+                   args.epsilon, args.seed);
+  } else if (args.run_nsga2) {
+    runNSGA2_HDF5<N>(args.hdf5_path,
+                     prefix.empty() ? "output/nsga2" : prefix,
+                     args.epsilon, args.seed);
+  } else {
+    runLandscape<N>(args.hdf5_path, args.csv_path, args.epsilon);
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -209,33 +302,7 @@ int main(int argc, char** argv) {
     const Args args = parseArgs(argc, argv);
 
     if (args.run_triangle) {
-      std::string prefix = args.out_prefix.empty() ? "output/triangle" : args.out_prefix;
-      runNSGA2_Triangle<16>(prefix, 1, 4, args.epsilon, args.seed);
-      return 0;
-    }
-
-    if (args.run_nsga2) {
-      const std::size_t feature_count =
-          inferFeatureCountFromFile(args.hdf5_path, true);
-      std::string prefix = args.out_prefix;
-      if (prefix.empty()) {
-        prefix = "output/nsga2";
-      }
-
-      switch (feature_count) {
-        case 9:
-          runNSGA2_HDF5<9>(args.hdf5_path, prefix, args.epsilon, args.seed);
-          break;
-        case 15:
-          runNSGA2_HDF5<15>(args.hdf5_path, prefix, args.epsilon, args.seed);
-          break;
-        case 16:
-          runNSGA2_HDF5<16>(args.hdf5_path, prefix, args.epsilon, args.seed);
-          break;
-        default:
-          throw std::runtime_error(
-              "Unsupported feature count " + std::to_string(feature_count));
-      }
+      dispatch<16>(args);
       return 0;
     }
 
@@ -243,15 +310,9 @@ int main(int argc, char** argv) {
         inferFeatureCountFromFile(args.hdf5_path, true);
 
     switch (feature_count) {
-      case 9:
-        runLandscape<9>(args.hdf5_path, args.csv_path, args.epsilon);
-        break;
-      case 15:
-        runLandscape<15>(args.hdf5_path, args.csv_path, args.epsilon);
-        break;
-      case 16:
-        runLandscape<16>(args.hdf5_path, args.csv_path, args.epsilon);
-        break;
+      case 9:  dispatch<9>(args);  break;
+      case 15: dispatch<15>(args); break;
+      case 16: dispatch<16>(args); break;
       default:
         throw std::runtime_error(
             "Unsupported feature count " + std::to_string(feature_count));
