@@ -1,12 +1,15 @@
 #include <bitset>
 #include <cstddef>
+#include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "landscapes.cpp"
 #include "nsga2.cpp"
 #include "pso.cpp"
+#include "single_ga.cpp"
 
 namespace {
 
@@ -234,6 +237,66 @@ void runNSGA2_Triangle(const std::string& out_prefix,
   exportCSVs(nsga, out_prefix);
 }
 
+// ── Single-objective GA (single-ga branch workflow / plotting outputs) ────
+
+template <std::size_t N>
+void runExperiment(std::unique_ptr<Landscape<N>> landscape,
+                   const std::string& name) {
+  SingleObjectiveGA<N> ga(
+      std::move(landscape),
+      200,   // popsize
+      50,    // generations
+      0.05,  // crossover
+      0.05,  // mutation
+      2,     // elites
+      3,     // kParents
+      1,     // crossover points
+      name);
+  ga.init();
+  auto res = ga.run();
+  std::cout << name << " - Accuracy: " << res.getAccuracy() << " Bitstring: "
+            << res.getGene() << std::endl;
+
+  std::ofstream out("pop_" + name + ".csv");
+  out << "id,fitness,niche" << std::endl;
+  auto niches = ga.findNiches();
+  for (size_t i = 0; i < niches.size(); i++) {
+    for (auto& ind : niches[i]) {
+      out << ind.getGene().to_ulong() << "," << ind.getAccuracy() << "," << i
+          << std::endl;
+    }
+  }
+}
+
+void runSingleGAExperiments(double epsilon) {
+  {
+    auto landscape = std::make_unique<TriangleLandscape<16>>(1, 4, epsilon);
+    landscape->precompute("data/triangle.csv");
+    runExperiment<16>(std::move(landscape), "triangle");
+  }
+
+  {
+    auto landscape =
+        std::make_unique<HDF5Landscape<9>>("data/01-breast-w_lr_F.h5", epsilon);
+    landscape->exportToCSV("data/landscape_breast.csv");
+    runExperiment<9>(std::move(landscape), "breast");
+  }
+
+  {
+    auto landscape =
+        std::make_unique<HDF5Landscape<15>>("data/05-credit-a_rf_F.h5", epsilon);
+    landscape->exportToCSV("data/landscape_credit.csv");
+    runExperiment<15>(std::move(landscape), "credit");
+  }
+
+  {
+    auto landscape =
+        std::make_unique<HDF5Landscape<16>>("data/08-letter-r_knn_F.h5", epsilon);
+    landscape->exportToCSV("data/landscape_letter.csv");
+    runExperiment<16>(std::move(landscape), "letter");
+  }
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 struct Args {
@@ -243,6 +306,7 @@ struct Args {
   bool run_nsga2 = false;
   bool run_pso = false;
   bool run_triangle = false;
+  bool run_sga = false;
   double epsilon = 0.1;
   unsigned seed = 42;
 };
@@ -259,6 +323,8 @@ Args parseArgs(int argc, char** argv) {
       args.run_pso = true;
     } else if (arg == "--triangle") {
       args.run_triangle = true;
+    } else if (arg == "--sga") {
+      args.run_sga = true;
     } else if (arg == "--out" && i + 1 < argc) {
       args.out_prefix = argv[++i];
     } else if (arg == "--epsilon" && i + 1 < argc) {
@@ -300,6 +366,11 @@ void dispatch(const Args& args) {
 int main(int argc, char** argv) {
   try {
     const Args args = parseArgs(argc, argv);
+
+    if (args.run_sga) {
+      runSingleGAExperiments(args.epsilon);
+      return 0;
+    }
 
     if (args.run_triangle) {
       dispatch<16>(args);
