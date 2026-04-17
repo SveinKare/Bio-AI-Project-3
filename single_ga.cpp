@@ -1,4 +1,6 @@
 #include "landscapes.cpp"
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <random>
 #include <set>
@@ -9,6 +11,8 @@ using namespace std;
 
 mt19937 gen(1234);
 bernoulli_distribution berRand(0.5);
+
+void seedSgaRng(unsigned s) { gen.seed(s); }
 
 template <size_t N>
 class SgaIndividual {
@@ -62,6 +66,8 @@ class SingleObjectiveGA {
     int kParents;
     int crossoverPoints;
     string name;
+    /** If non-empty, stats and anim frames are written under this directory. */
+    string outputDir_;
 
     vector<SgaIndividual<N>> population;
 
@@ -86,7 +92,8 @@ class SingleObjectiveGA {
         int numberOfElites,
         int kParents,
         int crossoverPoints,
-        const string& name
+        const string& name,
+        const string& output_dir = {}
         ): 
       landscape(std::move(landscape)), 
       popSize(popSize), 
@@ -96,7 +103,8 @@ class SingleObjectiveGA {
       numberOfElites(numberOfElites),
       kParents(kParents),
       crossoverPoints(crossoverPoints),
-      name(name)
+      name(name),
+      outputDir_(output_dir)
   {}
 
     vector<SgaIndividual<N>> getPopulation() const { return this->population; }
@@ -157,7 +165,9 @@ class SingleObjectiveGA {
         if (niche[0].getAccuracy() > bestNicheFit) bestNicheFit = niche[0].getAccuracy();
       }
 
-      std::ofstream stats("stats_" + name + ".csv", generation == 0 ? std::ios::trunc : std::ios::app);
+      const string dir_prefix = outputDir_.empty() ? "" : (outputDir_ + "/");
+      std::ofstream stats(dir_prefix + "stats_" + name + ".csv",
+                          generation == 0 ? std::ios::trunc : std::ios::app);
       if (generation == 0) {
         stats << "generation,avg_hamming,unique_genotypes,entropy,max_fitness,min_fitness,avg_fitness,num_niches,largest_niche,best_niche_fitness" << std::endl;
       }
@@ -172,6 +182,15 @@ class SingleObjectiveGA {
         << largestNiche << ","
         << bestNicheFit << std::endl;
       stats.close();
+
+      std::error_code ec;
+      const string anim_dir = dir_prefix + "anim";
+      std::filesystem::create_directories(anim_dir, ec);
+      std::ofstream genPop(anim_dir + "/" + name + "_gen_" + std::to_string(generation) + ".csv");
+      genPop << "id,fitness\n";
+      for (auto& ind : population) {
+        genPop << ind.getGene().to_ulong() << "," << ind.getFitness() << "\n";
+      }
     }
 
     double calcEntropy() {
@@ -268,6 +287,11 @@ class SingleObjectiveGA {
 
     SgaIndividual<N> run() {
       cout << "Running algorithm..." << endl;
+      if (!outputDir_.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(outputDir_, ec);
+        std::filesystem::create_directories(outputDir_ + "/anim", ec);
+      }
       uniform_int_distribution<size_t> dist(0, this->popSize-1);
       uniform_real_distribution<double> randDouble(0.0, 1.0);
 

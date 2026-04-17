@@ -1,5 +1,6 @@
 #include <bitset>
 #include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -109,12 +110,82 @@ void exportCSVs(Algo& algo, const std::string& prefix) {
             << "  Exported: " << prefix << "_snapshots.csv\n";
 }
 
+std::string caseFromPrefix(const std::string& prefix) {
+  const auto pos = prefix.find_last_of('/');
+  if (pos == std::string::npos || pos + 1 >= prefix.size()) return prefix;
+  return prefix.substr(pos + 1);
+}
+
+constexpr const char* kBestSolutionsPath = "output/best/all_best_solutions.csv";
+
+std::string g_best_csv_path = kBestSolutionsPath;
+int g_stats_run_index = -1;
+unsigned g_stats_seed = 0;
+
+void appendBestSolutionRow(const std::string& algorithm,
+                           const std::string& case_id,
+                           const std::string& bitstring,
+                           std::size_t n_features,
+                           double accuracy,
+                           double second_objective,
+                           double scalar_fitness) {
+  const std::string& path = g_best_csv_path;
+  {
+    const auto parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) std::filesystem::create_directories(parent);
+  }
+  const bool need_header = !std::filesystem::exists(path) ||
+      std::filesystem::file_size(path) == 0;
+  std::ofstream out(path, std::ios::app);
+  if (need_header) {
+    if (g_stats_run_index >= 0) {
+      out << "run_index,seed,algorithm,case,bitstring,n_features,accuracy,"
+             "second_objective,scalar_fitness\n";
+    } else {
+      out << "algorithm,case,bitstring,n_features,accuracy,second_objective,"
+             "scalar_fitness\n";
+    }
+  }
+  if (g_stats_run_index >= 0) {
+    out << g_stats_run_index << ',' << g_stats_seed << ',';
+  }
+  out << algorithm << ',' << case_id << ',' << bitstring << ','
+      << n_features << ',' << accuracy << ',' << second_objective << ','
+      << scalar_fitness << '\n';
+}
+
+template <std::size_t N>
+void recordBestNSGA2(const std::vector<Individual<N>>& front,
+                     const std::string& out_prefix,
+                     double epsilon) {
+  if (front.empty()) return;
+  const auto& best = *std::max_element(front.begin(), front.end(),
+      [](const auto& a, const auto& b) {
+        return a.obj_accuracy < b.obj_accuracy;
+      });
+  const double pen =
+      (static_cast<double>(best.chromosome.count()) / static_cast<double>(N)) *
+      epsilon;
+  const double scalar = best.obj_accuracy - pen;
+  appendBestSolutionRow("nsga2", caseFromPrefix(out_prefix),
+                        best.chromosome.to_string(), best.chromosome.count(),
+                        best.obj_accuracy, best.obj_time, scalar);
+}
+
+template <std::size_t N>
+void recordBestPSO(const Particle<N>& best, const std::string& out_prefix) {
+  appendBestSolutionRow("pso", caseFromPrefix(out_prefix),
+                        best.position.to_string(), best.position.count(),
+                        best.obj_accuracy, best.obj_time, best.fitness);
+}
+
 // ── PSO runners ─────────────────────────────────────────────────────────────
 
 template <std::size_t N>
 void runPSO_HDF5(const std::string& hdf5_path,
                  const std::string& out_prefix,
-                 double epsilon, unsigned seed) {
+                 double epsilon, unsigned seed,
+                 bool lite) {
   HDF5Landscape<N> landscape(hdf5_path, epsilon, true);
 
   typename BinaryPSO<N>::Config cfg;
@@ -137,13 +208,15 @@ void runPSO_HDF5(const std::string& hdf5_path,
 
   pso.run();
   printBestPSO<N>(pso.globalBest());
-  exportCSVs(pso, out_prefix);
+  if (!lite) exportCSVs(pso, out_prefix);
+  recordBestPSO<N>(pso.globalBest(), out_prefix);
 }
 
 template <std::size_t N>
 void runPSO_Triangle(const std::string& out_prefix,
                      int m, int s,
-                     double epsilon, unsigned seed) {
+                     double epsilon, unsigned seed,
+                     bool lite) {
   TriangleLandscape<N> landscape(m, s, epsilon);
 
   typename BinaryPSO<N>::Config cfg;
@@ -166,7 +239,8 @@ void runPSO_Triangle(const std::string& out_prefix,
 
   pso.run();
   printBestPSO<N>(pso.globalBest());
-  exportCSVs(pso, out_prefix);
+  if (!lite) exportCSVs(pso, out_prefix);
+  recordBestPSO<N>(pso.globalBest(), out_prefix);
 }
 
 // ── NSGA-II runners ─────────────────────────────────────────────────────────
@@ -174,7 +248,8 @@ void runPSO_Triangle(const std::string& out_prefix,
 template <std::size_t N>
 void runNSGA2_HDF5(const std::string& hdf5_path,
                    const std::string& out_prefix,
-                   double epsilon, unsigned seed) {
+                   double epsilon, unsigned seed,
+                   bool lite) {
   HDF5Landscape<N> landscape(hdf5_path, epsilon, true);
 
   typename NSGA2<N>::Config cfg;
@@ -201,13 +276,15 @@ void runNSGA2_HDF5(const std::string& hdf5_path,
   auto front = nsga.paretoFront();
   std::cout << "  Pareto front size: " << front.size() << '\n';
   printBestNSGA2<N>(front);
-  exportCSVs(nsga, out_prefix);
+  if (!lite) exportCSVs(nsga, out_prefix);
+  recordBestNSGA2<N>(front, out_prefix, epsilon);
 }
 
 template <std::size_t N>
 void runNSGA2_Triangle(const std::string& out_prefix,
                        int m, int s,
-                       double epsilon, unsigned seed) {
+                       double epsilon, unsigned seed,
+                       bool lite) {
   TriangleLandscape<N> landscape(m, s, epsilon);
 
   typename NSGA2<N>::Config cfg;
@@ -234,14 +311,17 @@ void runNSGA2_Triangle(const std::string& out_prefix,
   auto front = nsga.paretoFront();
   std::cout << "  Pareto front size: " << front.size() << '\n';
   printBestNSGA2<N>(front);
-  exportCSVs(nsga, out_prefix);
+  if (!lite) exportCSVs(nsga, out_prefix);
+  recordBestNSGA2<N>(front, out_prefix, epsilon);
 }
 
 // ── Single-objective GA (single-ga branch workflow / plotting outputs) ────
 
 template <std::size_t N>
 void runExperiment(std::unique_ptr<Landscape<N>> landscape,
-                   const std::string& name) {
+                   const std::string& name,
+                   bool lite) {
+  constexpr const char* kSgaDir = "output/sga";
   SingleObjectiveGA<N> ga(
       std::move(landscape),
       200,   // popsize
@@ -251,50 +331,101 @@ void runExperiment(std::unique_ptr<Landscape<N>> landscape,
       2,     // elites
       3,     // kParents
       1,     // crossover points
-      name);
+      name,
+      kSgaDir);
   ga.init();
   auto res = ga.run();
   std::cout << name << " - Accuracy: " << res.getAccuracy() << " Bitstring: "
             << res.getGene() << std::endl;
 
-  std::ofstream out("pop_" + name + ".csv");
-  out << "id,fitness,niche" << std::endl;
-  auto niches = ga.findNiches();
-  for (size_t i = 0; i < niches.size(); i++) {
-    for (auto& ind : niches[i]) {
-      out << ind.getGene().to_ulong() << "," << ind.getAccuracy() << "," << i
-          << std::endl;
+  if (!lite) {
+    std::ofstream out(std::string(kSgaDir) + "/pop_" + name + ".csv");
+    out << "id,fitness,niche" << std::endl;
+    auto niches = ga.findNiches();
+    for (size_t i = 0; i < niches.size(); i++) {
+      for (auto& ind : niches[i]) {
+        out << ind.getGene().to_ulong() << "," << ind.getAccuracy() << "," << i
+            << std::endl;
+      }
     }
   }
+
+  const double pen = res.getAccuracy() - res.getFitness();
+  appendBestSolutionRow("sga", name, res.getGene().to_string(),
+                        res.getGene().count(), res.getAccuracy(), pen,
+                        res.getFitness());
 }
 
-void runSingleGAExperiments(double epsilon) {
+void runSingleGAExperiments(double epsilon, bool lite, unsigned seed) {
+  seedSgaRng(seed);
+  std::filesystem::create_directories("output/sga");
+
   {
     auto landscape = std::make_unique<TriangleLandscape<16>>(1, 4, epsilon);
     landscape->precompute("data/triangle.csv");
-    runExperiment<16>(std::move(landscape), "triangle");
+    runExperiment<16>(std::move(landscape), "triangle", lite);
+    if (!lite) {
+      std::error_code ec;
+      std::filesystem::copy_file("data/triangle.csv", "output/sga/triangle.csv",
+                                 std::filesystem::copy_options::overwrite_existing,
+                                 ec);
+    }
   }
 
   {
     auto landscape =
         std::make_unique<HDF5Landscape<9>>("data/01-breast-w_lr_F.h5", epsilon);
-    landscape->exportToCSV("data/landscape_breast.csv");
-    runExperiment<9>(std::move(landscape), "breast");
+    if (!lite) landscape->exportToCSV("output/sga/landscape_breast.csv");
+    runExperiment<9>(std::move(landscape), "breast", lite);
   }
 
   {
     auto landscape =
         std::make_unique<HDF5Landscape<15>>("data/05-credit-a_rf_F.h5", epsilon);
-    landscape->exportToCSV("data/landscape_credit.csv");
-    runExperiment<15>(std::move(landscape), "credit");
+    if (!lite) landscape->exportToCSV("output/sga/landscape_credit.csv");
+    runExperiment<15>(std::move(landscape), "credit", lite);
   }
 
   {
     auto landscape =
         std::make_unique<HDF5Landscape<16>>("data/08-letter-r_knn_F.h5", epsilon);
-    landscape->exportToCSV("data/landscape_letter.csv");
-    runExperiment<16>(std::move(landscape), "letter");
+    if (!lite) landscape->exportToCSV("output/sga/landscape_letter.csv");
+    runExperiment<16>(std::move(landscape), "letter", lite);
   }
+}
+
+void runSingleGACase(double epsilon, unsigned seed, const std::string& case_name,
+                     bool lite) {
+  seedSgaRng(seed);
+  std::filesystem::create_directories("output/sga");
+  if (case_name == "triangle") {
+    auto landscape = std::make_unique<TriangleLandscape<16>>(1, 4, epsilon);
+    landscape->precompute("data/triangle.csv");
+    runExperiment<16>(std::move(landscape), "triangle", lite);
+    return;
+  }
+  if (case_name == "breast") {
+    auto landscape =
+        std::make_unique<HDF5Landscape<9>>("data/01-breast-w_lr_F.h5", epsilon);
+    if (!lite) landscape->exportToCSV("output/sga/landscape_breast.csv");
+    runExperiment<9>(std::move(landscape), "breast", lite);
+    return;
+  }
+  if (case_name == "credit") {
+    auto landscape =
+        std::make_unique<HDF5Landscape<15>>("data/05-credit-a_rf_F.h5", epsilon);
+    if (!lite) landscape->exportToCSV("output/sga/landscape_credit.csv");
+    runExperiment<15>(std::move(landscape), "credit", lite);
+    return;
+  }
+  if (case_name == "letter") {
+    auto landscape =
+        std::make_unique<HDF5Landscape<16>>("data/08-letter-r_knn_F.h5", epsilon);
+    if (!lite) landscape->exportToCSV("output/sga/landscape_letter.csv");
+    runExperiment<16>(std::move(landscape), "letter", lite);
+    return;
+  }
+  throw std::runtime_error("Unknown --sga-case: " + case_name);
 }
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
@@ -303,12 +434,16 @@ struct Args {
   std::string hdf5_path = "data/01-breast-w_lr_F.h5";
   std::string csv_path;
   std::string out_prefix;
+  std::string best_csv;
+  std::string sga_case = "all";
   bool run_nsga2 = false;
   bool run_pso = false;
   bool run_triangle = false;
   bool run_sga = false;
+  bool lite = false;
   double epsilon = 0.1;
   unsigned seed = 42;
+  int stats_run = -1;
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -325,6 +460,14 @@ Args parseArgs(int argc, char** argv) {
       args.run_triangle = true;
     } else if (arg == "--sga") {
       args.run_sga = true;
+    } else if (arg == "--lite") {
+      args.lite = true;
+    } else if (arg == "--best-csv" && i + 1 < argc) {
+      args.best_csv = argv[++i];
+    } else if (arg == "--sga-case" && i + 1 < argc) {
+      args.sga_case = argv[++i];
+    } else if (arg == "--stats-run" && i + 1 < argc) {
+      args.stats_run = std::stoi(argv[++i]);
     } else if (arg == "--out" && i + 1 < argc) {
       args.out_prefix = argv[++i];
     } else if (arg == "--epsilon" && i + 1 < argc) {
@@ -341,23 +484,25 @@ Args parseArgs(int argc, char** argv) {
 template <std::size_t N>
 void dispatch(const Args& args) {
   const std::string& prefix = args.out_prefix;
+  const bool lite = args.lite;
+  const double eps = args.epsilon;
   if (args.run_triangle) {
     if (args.run_pso)
       runPSO_Triangle<N>(prefix.empty() ? "output/triangle" : prefix,
-                         1, 4, args.epsilon, args.seed);
+                         1, 4, eps, args.seed, lite);
     else
       runNSGA2_Triangle<N>(prefix.empty() ? "output/triangle" : prefix,
-                           1, 4, args.epsilon, args.seed);
+                           1, 4, eps, args.seed, lite);
   } else if (args.run_pso) {
     runPSO_HDF5<N>(args.hdf5_path,
                    prefix.empty() ? "output/pso" : prefix,
-                   args.epsilon, args.seed);
+                   eps, args.seed, lite);
   } else if (args.run_nsga2) {
     runNSGA2_HDF5<N>(args.hdf5_path,
                      prefix.empty() ? "output/nsga2" : prefix,
-                     args.epsilon, args.seed);
+                     eps, args.seed, lite);
   } else {
-    runLandscape<N>(args.hdf5_path, args.csv_path, args.epsilon);
+    runLandscape<N>(args.hdf5_path, args.csv_path, eps);
   }
 }
 
@@ -367,8 +512,16 @@ int main(int argc, char** argv) {
   try {
     const Args args = parseArgs(argc, argv);
 
+    if (!args.best_csv.empty()) g_best_csv_path = args.best_csv;
+    g_stats_run_index = args.stats_run;
+    g_stats_seed = args.seed;
+
     if (args.run_sga) {
-      runSingleGAExperiments(args.epsilon);
+      if (!args.sga_case.empty() && args.sga_case != "all") {
+        runSingleGACase(args.epsilon, args.seed, args.sga_case, args.lite);
+      } else {
+        runSingleGAExperiments(args.epsilon, args.lite, args.seed);
+      }
       return 0;
     }
 
