@@ -7,10 +7,10 @@ import glob
 import re
 
 experiments = [
-    {"name": "triangle",  "landscape": "triangle.csv",         "bits": 16, "fit_col": 1},
-    {"name": "breast",    "landscape": "landscape_breast.csv", "bits": 9,  "fit_col": 3},
-    {"name": "credit",    "landscape": "landscape_credit.csv", "bits": 15, "fit_col": 3},
-    {"name": "letter",    "landscape": "landscape_letter.csv", "bits": 16, "fit_col": 3},
+    {"name": "triangle",  "landscape": "data/triangle.csv",         "bits": 16, "fit_col": 1},
+    {"name": "breast",    "landscape": "data/landscape_breast.csv", "bits": 9,  "fit_col": 3},
+    {"name": "credit",    "landscape": "data/landscape_credit.csv", "bits": 15, "fit_col": 3},
+    {"name": "letter",    "landscape": "data/landscape_letter.csv", "bits": 16, "fit_col": 3},
 ]
 
 def animate_experiment(exp):

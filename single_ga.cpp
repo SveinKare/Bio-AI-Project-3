@@ -100,6 +100,29 @@ class SingleObjectiveGA {
 
     vector<Individual<N>> getPopulation() const { return this->population; }
 
+    void reset() {
+      population.clear();
+    }
+
+    static void setSeed(unsigned int seed) {
+      gen.seed(seed);
+    }
+
+    void setHyperparameters(double crossoverRate, double mutationRate, int crossoverPoints) {
+      this->crossoverRate = crossoverRate;
+      this->mutationRate = mutationRate;
+      this->crossoverPoints = crossoverPoints;
+    }
+
+    void dumpPopulation(int generation, const string& name) {
+      std::ofstream out("anim/" + name + "_gen_" + std::to_string(generation) + ".csv");
+      out << "id,fitness" << std::endl;
+      for (auto& ind : this->population) {
+        out << ind.getGene().to_ulong() << "," << ind.getAccuracy() << std::endl;
+      }
+      out.close();
+    }
+
     void dumpGeneration(int generation, const string& name) {
       double totalDist = 0;
       int distCount = 0;
@@ -171,6 +194,8 @@ class SingleObjectiveGA {
         << largestNiche << ","
         << bestNicheFit << std::endl;
       stats.close();
+
+      this->dumpPopulation(generation, name);
     }
 
     double calcEntropy() {
@@ -265,8 +290,10 @@ class SingleObjectiveGA {
       res.push_back(winner2); 
     }
 
-    Individual<N> run() {
-      cout << "Running algorithm..." << endl;
+    Individual<N> run(bool verbose = true) {
+      if (verbose) {
+        cout << "Running algorithm..." << endl;
+      }
       uniform_int_distribution<size_t> dist(0, this->popSize-1);
       uniform_real_distribution<double> randDouble(0.0, 1.0);
 
@@ -338,12 +365,13 @@ class SingleObjectiveGA {
           if (fitness < minFitness) minFitness = fitness;
           sum += fitness;
         }
-        cout << "Generation: " << i 
-          << " | Max fitness: " << maxFitness 
-          << " | Min fitness: " << minFitness 
-          << " | Average fitness: " << static_cast<double>(sum) / this->popSize << endl;
-
-        this->dumpGeneration(i, this->name);
+        if (verbose) {
+          cout << "Generation: " << i 
+            << " | Max fitness: " << maxFitness 
+            << " | Min fitness: " << minFitness 
+            << " | Average fitness: " << static_cast<double>(sum) / this->popSize << endl;
+          this->dumpGeneration(i, this->name);
+        }
 
         // Check for a new best solution
         if (maxFitness >= solution.getFitness()) {

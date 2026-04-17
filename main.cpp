@@ -1,6 +1,7 @@
 #include <bitset>
 #include <cstddef>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -8,6 +9,8 @@
 #include "landscapes.cpp"
 #include "single_ga.cpp"
 #include <memory>
+#include <numeric>
+#include <iomanip>
 
 namespace {
 
@@ -147,35 +150,131 @@ void runExperiment(std::unique_ptr<Landscape<N>> landscape, const string& name, 
   out.close();
 }
 
-int main() {
+struct HyperParams {
+  double crossoverRate;
+  double mutationRate;
+  int crossoverPoints;
+};
+
+template <size_t N>
+void runGridSearch(
+    std::unique_ptr<Landscape<N>> landscape,
+    const string& name,
+    const std::vector<HyperParams>& configs,
+    int runsPerConfig,
+    std::ofstream& perRun,
+    std::ofstream& perConfig) {
+
+  SingleObjectiveGA<N> ga(
+      std::move(landscape),
+      200, 50, 0.05, 0.05, 2, 3, 1, name);
+
+  std::random_device rd;
+
+  for (size_t ci = 0; ci < configs.size(); ci++) {
+    const auto& hp = configs[ci];
+    ga.setHyperparameters(hp.crossoverRate, hp.mutationRate, hp.crossoverPoints);
+
+    std::vector<double> bestFitnesses;
+    bestFitnesses.reserve(runsPerConfig);
+
+    for (int r = 0; r < runsPerConfig; r++) {
+      unsigned int seed = rd();
+      SingleObjectiveGA<N>::setSeed(seed);
+
+      ga.reset();
+      ga.init();
+      auto best = ga.run(false);
+      double acc = best.getAccuracy();
+      bestFitnesses.push_back(acc);
+
+      perRun << name
+        << "," << hp.crossoverRate
+        << "," << hp.mutationRate
+        << "," << hp.crossoverPoints
+        << "," << r
+        << "," << seed
+        << "," << acc
+        << "," << best.getGene().to_ulong()
+        << "\n";
+    }
+
+    double mean = std::accumulate(bestFitnesses.begin(), bestFitnesses.end(), 0.0) / bestFitnesses.size();
+    double sqSum = 0.0;
+    for (double x : bestFitnesses) sqSum += (x - mean) * (x - mean);
+    double stdev = bestFitnesses.size() > 1 ? std::sqrt(sqSum / (bestFitnesses.size() - 1)) : 0.0;
+    double best = *std::max_element(bestFitnesses.begin(), bestFitnesses.end());
+    double worst = *std::min_element(bestFitnesses.begin(), bestFitnesses.end());
+
+    perConfig << name
+      << "," << hp.crossoverRate
+      << "," << hp.mutationRate
+      << "," << hp.crossoverPoints
+      << "," << runsPerConfig
+      << "," << mean
+      << "," << stdev
+      << "," << best
+      << "," << worst
+      << "\n";
+
+    std::cout << "[" << name << "] cx=" << hp.crossoverRate
+      << " mut=" << hp.mutationRate
+      << " pts=" << hp.crossoverPoints
+      << "  mean=" << mean
+      << " std=" << stdev << std::endl;
+  }
+}
+
+void runSingleObjectiveGAExperiment(int runsPerConfig = 5) {
   double epsilon = 0.05;
-  // Triangle landscape (N=16)
+
+  std::vector<int>    crossoverPointValues = {1, 2};
+  std::vector<double> crossoverRates       = {0.05, 0.3, 0.7};
+  std::vector<double> mutationRates        = {0.01, 0.05, 0.15};
+
+  std::vector<HyperParams> configs;
+  for (int cp : crossoverPointValues)
+    for (double cx : crossoverRates)
+      for (double mut : mutationRates)
+        configs.push_back({cx, mut, cp});
+
+  std::cout << "Grid: " << configs.size() << " configs x "
+    << runsPerConfig << " runs = "
+    << configs.size() * runsPerConfig << " runs per landscape\n";
+
+  std::ofstream perRun("experiment_runs.csv");
+  perRun << "landscape,crossover_rate,mutation_rate,crossover_points,"
+    << "run,seed,best_accuracy,best_gene\n";
+
+  std::ofstream perConfig("experiment_configs.csv");
+  perConfig << "landscape,crossover_rate,mutation_rate,crossover_points,"
+    << "runs,mean_accuracy,std_accuracy,best_accuracy,worst_accuracy\n";
+
   {
     auto landscape = std::make_unique<TriangleLandscape<16>>(1, 4, epsilon);
     landscape->precompute("data/triangle.csv");
-    runExperiment<16>(std::move(landscape), "triangle", "data/triangle.csv");
+    runGridSearch<16>(std::move(landscape), "triangle", configs, runsPerConfig, perRun, perConfig);
   }
-
-  // Breast cancer (check your feature count - likely N=9)
   {
     auto landscape = std::make_unique<HDF5Landscape<9>>("data/01-breast-w_lr_F.h5", epsilon);
-    landscape->exportToCSV("data/landscape_breast.csv");
-    runExperiment<9>(std::move(landscape), "breast", "data/landscape_breast.csv");
+    runGridSearch<9>(std::move(landscape), "breast", configs, runsPerConfig, perRun, perConfig);
   }
-
-  // Credit (likely N=15)
   {
     auto landscape = std::make_unique<HDF5Landscape<15>>("data/05-credit-a_rf_F.h5", epsilon);
-    landscape->exportToCSV("data/landscape_credit.csv");
-    runExperiment<15>(std::move(landscape), "credit", "data/landscape_credit.csv");
+    runGridSearch<15>(std::move(landscape), "credit", configs, runsPerConfig, perRun, perConfig);
   }
-
-  // Letter recognition (likely N=16)
   {
     auto landscape = std::make_unique<HDF5Landscape<16>>("data/08-letter-r_knn_F.h5", epsilon);
-    landscape->exportToCSV("data/landscape_letter.csv");
-    runExperiment<16>(std::move(landscape), "letter", "data/landscape_letter.csv");
+    runGridSearch<16>(std::move(landscape), "letter", configs, runsPerConfig, perRun, perConfig);
   }
 
+  perRun.close();
+  perConfig.close();
+  std::cout << "\nWrote experiment_runs.csv and experiment_configs.csv\n";
+}
+
+int main() {
+  runSingleObjectiveGAExperiment(5);
   return 0;
 }
+

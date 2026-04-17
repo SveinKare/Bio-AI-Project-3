@@ -4,11 +4,53 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 
 experiments = [
-    {"name": "triangle",      "display": "Triangle",       "landscape": "triangle.csv",         "pop": "pop_triangle.csv", "bits": 16, "fit_col": 1},
-    {"name": "breast",        "display": "Breast Cancer",  "landscape": "landscape_breast.csv", "pop": "pop_breast.csv",   "bits": 9,  "fit_col": 3},
-    {"name": "credit",        "display": "Credit",         "landscape": "landscape_credit.csv", "pop": "pop_credit.csv",   "bits": 15, "fit_col": 3},
-    {"name": "letter",        "display": "Letter",         "landscape": "landscape_letter.csv", "pop": "pop_letter.csv",   "bits": 16, "fit_col": 3},
+    {"name": "triangle",      "display": "Triangle",       "landscape": "data/triangle.csv",         "pop": "pop_triangle.csv", "bits": 16, "fit_col": 1},
+    {"name": "breast",        "display": "Breast Cancer",  "landscape": "data/landscape_breast.csv", "pop": "pop_breast.csv",   "bits": 9,  "fit_col": 3},
+    {"name": "credit",        "display": "Credit",         "landscape": "data/landscape_credit.csv", "pop": "pop_credit.csv",   "bits": 15, "fit_col": 3},
+    {"name": "letter",        "display": "Letter",         "landscape": "data/landscape_letter.csv", "pop": "pop_letter.csv",   "bits": 16, "fit_col": 3},
 ]
+
+def plot_fitness_distribution(exp):
+    """Overlay population fitness histogram on top of the landscape's fitness distribution."""
+    df = pd.read_csv(exp["landscape"])
+    landscape_fitness = df.iloc[:, exp["fit_col"]].values
+
+    pop = pd.read_csv(exp["pop"])
+    pop_fitness = pop["fitness"].values
+
+    # Shared bin edges so the two histograms are directly comparable
+    fmin = min(landscape_fitness.min(), pop_fitness.min())
+    fmax = max(landscape_fitness.max(), pop_fitness.max())
+    bins = np.linspace(fmin, fmax, 80)
+
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    # Landscape distribution (how fitness is distributed across the whole search space)
+    ax1.hist(landscape_fitness, bins=bins, color="steelblue", alpha=0.6,
+             label=f"Landscape (N={len(landscape_fitness)})")
+    ax1.set_xlabel("Fitness")
+    ax1.set_ylabel("Landscape count", color="steelblue")
+    ax1.tick_params(axis="y", labelcolor="steelblue")
+
+    # Population distribution on a second y-axis so the small pop doesn't vanish
+    ax2 = ax1.twinx()
+    ax2.hist(pop_fitness, bins=bins, color="red", alpha=0.7,
+             label=f"Population (N={len(pop_fitness)})")
+    ax2.set_ylabel("Population count", color="red")
+    ax2.tick_params(axis="y", labelcolor="red")
+
+    # Mark where the population sits relative to the landscape's best
+    ax1.axvline(landscape_fitness.max(), color="black", linestyle=":",
+                linewidth=1, label="Landscape max")
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
+
+    plt.title(f"{exp['display']} — Population vs. Landscape Fitness Distribution")
+    plt.tight_layout()
+    plt.savefig(f"fitdist_{exp['name']}.png", dpi=200)
+    plt.show()
 
 def plot_heatmap(exp):
     bits = exp["bits"]
@@ -67,35 +109,6 @@ def plot_heatmap(exp):
     plt.savefig(f"heatmap_{exp['name'].lower().replace(' ', '_')}.png", dpi=200)
     plt.show()
 
-def plot_histograms(exp):
-    df = pd.read_csv(exp["landscape"])
-    landscape_fitness = df.iloc[:, exp["fit_col"]].values
-
-    pop = pd.read_csv(exp["pop"])
-
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-
-    ax1.hist(landscape_fitness, bins=100, color="steelblue", alpha=0.7)
-    ax1.set_ylabel("Landscape count")
-    ax1.set_title(f"{exp['name']} — Fitness Distribution")
-
-    if "niche" in pop.columns:
-        niche_ids = sorted(pop["niche"].unique())
-        colors = plt.cm.tab10(np.linspace(0, 1, min(len(niche_ids), 10)))
-        for niche_id, color in zip(niche_ids, colors):
-            niche_fit = pop[pop["niche"] == niche_id]["fitness"].values
-            ax2.hist(niche_fit, bins=100, color=color, alpha=0.7, label=f"Niche {niche_id}")
-        ax2.legend()
-    else:
-        ax2.hist(pop["fitness"].values, bins=50, color="red", alpha=0.7)
-
-    ax2.set_xlabel("Fitness")
-    ax2.set_ylabel("Population count")
-
-    plt.tight_layout()
-    plt.savefig(f"hist_{exp['name'].lower().replace(' ', '_')}.png", dpi=200)
-    plt.show()
-
 def plot_diversity(exp):
     df = pd.read_csv(f"stats_{exp['name']}.csv")
 
@@ -118,7 +131,47 @@ def plot_diversity(exp):
     plt.savefig(f"diversity_{exp['name']}.png", dpi=200)
     plt.show()
 
-for exp in experiments:
+def plot_grid_search():
+    import pandas as pd
+    import numpy as np
+
+    landscapes = ["triangle", "breast", "credit", "letter"]
+    bits = {"triangle": 16, "breast": 9, "credit": 15, "letter": 16}
+    runs = pd.read_csv("experiment_runs.csv")
+
+    rows = []
+    for land in landscapes:
+        opt = pd.read_csv(f"data/optima_{land}.csv")
+        global_fitness = opt["fitness"].max()
+
+        sub = runs[runs["landscape"] == land]
+
+        # Best run for this landscape
+        best_idx = sub["best_accuracy"].idxmax()
+        best_gene_int = int(sub.loc[best_idx, "best_gene"])
+        best_gene_bits = format(best_gene_int, f"0{bits[land]}b")
+        best_accuracy = sub.loc[best_idx, "best_accuracy"]
+
+        rows.append({
+            "landscape": land,
+            "runs": len(sub),
+            "global_optimum_accuracy": global_fitness,
+            "avg_accuracy":            sub["best_accuracy"].mean(),
+            "std_accuracy":            sub["best_accuracy"].std(),
+            "best_run_accuracy":       best_accuracy,
+            "best_run_gene":           best_gene_bits,
+            "gap_to_optimum":          global_fitness - best_accuracy,
+        })
+
+    summary = pd.DataFrame(rows)
+    print(summary.to_string(index=False))
+    summary.to_csv("optimum_hit_summary.csv", index=False)
+
+plot_grid_search()
+
+
+#for exp in experiments:
     #plot_heatmap(exp)
-    #plot_histograms(exp)
-    plot_diversity(exp)
+    #plot_fitness_distribution(exp)
+    #plot_diversity(exp)
+

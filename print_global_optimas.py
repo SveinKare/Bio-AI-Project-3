@@ -1,10 +1,10 @@
 import pandas as pd
 
 landscapes = [
-    {"name": "Triangle",      "file": "triangle.csv",         "fit_col": 1},
-    {"name": "Breast Cancer", "file": "landscape_breast.csv", "fit_col": 3},
-    {"name": "Credit",        "file": "landscape_credit.csv", "fit_col": 3},
-    {"name": "Letter",        "file": "landscape_letter.csv", "fit_col": 3},
+    {"name": "Triangle",      "file": "data/triangle.csv",         "fit_col": 1},
+    {"name": "Breast Cancer", "file": "data/landscape_breast.csv", "fit_col": 3},
+    {"name": "Credit",        "file": "data/landscape_credit.csv", "fit_col": 3},
+    {"name": "Letter",        "file": "data/landscape_letter.csv", "fit_col": 3},
 ]
 
 for l in landscapes:

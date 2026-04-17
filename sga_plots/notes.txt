@@ -1,0 +1,6 @@
+Animations are done with epsilon 0.05 for penalty
+200 population
+0.05 cross og mut rates
+2 elites
+3 kparents
+1-point crossover
