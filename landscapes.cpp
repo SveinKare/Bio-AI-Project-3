@@ -5,11 +5,9 @@
 #include <bitset>
 #include <cstddef>
 #include <fstream>
-#include <functional>
 #include <iomanip>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 using std::pair;

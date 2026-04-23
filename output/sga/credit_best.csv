@@ -1,0 +1,2 @@
+algorithm,case,bitstring,n_features,accuracy,second_objective
+sga,credit,000000101000000,2,0.871173,0.85784

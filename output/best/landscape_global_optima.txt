@@ -1,0 +1,20 @@
+Triangle:
+  Index: 15
+  Bitstring: 0000000000001111
+  Fitness: 4.000000
+
+Breast Cancer:
+  Index: 463
+  Bitstring: 0000000111001111
+  Fitness: 0.970122
+
+Credit:
+  Index: 7287
+  Bitstring: 0001110001110111
+  Fitness: 0.891263
+
+Letter:
+  Index: 2047
+  Bitstring: 0000011111111111
+  Fitness: 0.956333
+

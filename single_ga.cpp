@@ -1,4 +1,7 @@
 #include "landscapes.cpp"
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include <random>
 #include <set>
 #include <iostream>
@@ -9,18 +12,20 @@ using namespace std;
 mt19937 gen(1234);
 bernoulli_distribution berRand(0.5);
 
+void seedSgaRng(unsigned s) { gen.seed(s); }
+
 template <size_t N>
-class Individual {
+class SgaIndividual {
   private: 
     Fitness fitness;
     bitset<N> gene;
 
   public:
-    Individual() = default;
+    SgaIndividual() = default;
 
-    Individual(bitset<N> gene): gene(gene) {}
+    SgaIndividual(bitset<N> gene): gene(gene) {}
 
-    Individual(bitset<N> gene, Fitness fitness): gene(gene), fitness(fitness) {}
+    SgaIndividual(bitset<N> gene, Fitness fitness): gene(gene), fitness(fitness) {}
 
     double getFitness() const { return fitness.accuracy-fitness.penalty; }
 
@@ -45,7 +50,7 @@ class Individual {
 };
 
 template <size_t N>
-int hammingDist(Individual<N> &a, Individual<N> &b) {
+int hammingDist(SgaIndividual<N> &a, SgaIndividual<N> &b) {
   return (a.getGene() ^ b.getGene()).count();
 }
 
@@ -61,8 +66,10 @@ class SingleObjectiveGA {
     int kParents;
     int crossoverPoints;
     string name;
+    /** If non-empty, stats and anim frames are written under this directory. */
+    string outputDir_;
 
-    vector<Individual<N>> population;
+    vector<SgaIndividual<N>> population;
 
     bitset<N> randomGene() {
       bitset<N> gene;
@@ -85,7 +92,8 @@ class SingleObjectiveGA {
         int numberOfElites,
         int kParents,
         int crossoverPoints,
-        const string& name
+        const string& name,
+        const string& output_dir = {}
         ): 
       landscape(std::move(landscape)), 
       popSize(popSize), 
@@ -95,10 +103,11 @@ class SingleObjectiveGA {
       numberOfElites(numberOfElites),
       kParents(kParents),
       crossoverPoints(crossoverPoints),
-      name(name)
+      name(name),
+      outputDir_(output_dir)
   {}
 
-    vector<Individual<N>> getPopulation() const { return this->population; }
+    vector<SgaIndividual<N>> getPopulation() const { return this->population; }
 
     void reset() {
       population.clear();
@@ -149,15 +158,15 @@ class SingleObjectiveGA {
         if (f < minFit) minFit = f;
       }
 
-      vector<Individual<N>> popCopy = population;
-      vector<vector<Individual<N>>> niches;
+      vector<SgaIndividual<N>> popCopy = population;
+      vector<vector<SgaIndividual<N>>> niches;
       while (!popCopy.empty()) {
         auto bestIt = std::max_element(popCopy.begin(), popCopy.end(),
-            [](const Individual<N>& a, const Individual<N>& b) {
+            [](const SgaIndividual<N>& a, const SgaIndividual<N>& b) {
             return a.getAccuracy() < b.getAccuracy();
             });
-        vector<Individual<N>> niche;
-        Individual<N> best = *bestIt;
+        vector<SgaIndividual<N>> niche;
+        SgaIndividual<N> best = *bestIt;
         popCopy.erase(bestIt);
         niche.push_back(best);
         auto it = popCopy.begin();
@@ -179,7 +188,9 @@ class SingleObjectiveGA {
         if (niche[0].getAccuracy() > bestNicheFit) bestNicheFit = niche[0].getAccuracy();
       }
 
-      std::ofstream stats("stats_" + name + ".csv", generation == 0 ? std::ios::trunc : std::ios::app);
+      const string dir_prefix = outputDir_.empty() ? "" : (outputDir_ + "/");
+      std::ofstream stats(dir_prefix + "stats_" + name + ".csv",
+                          generation == 0 ? std::ios::trunc : std::ios::app);
       if (generation == 0) {
         stats << "generation,avg_hamming,unique_genotypes,entropy,max_fitness,min_fitness,avg_fitness,num_niches,largest_niche,best_niche_fitness" << std::endl;
       }
@@ -195,7 +206,14 @@ class SingleObjectiveGA {
         << bestNicheFit << std::endl;
       stats.close();
 
-      this->dumpPopulation(generation, name);
+      std::error_code ec;
+      const string anim_dir = dir_prefix + "anim";
+      std::filesystem::create_directories(anim_dir, ec);
+      std::ofstream genPop(anim_dir + "/" + name + "_gen_" + std::to_string(generation) + ".csv");
+      genPop << "id,fitness\n";
+      for (auto& ind : population) {
+        genPop << ind.getGene().to_ulong() << "," << ind.getFitness() << "\n";
+      }
     }
 
     double calcEntropy() {
@@ -213,7 +231,7 @@ class SingleObjectiveGA {
       return entropy;
     }
 
-    void crossover(Individual<N>& p1, Individual<N>& p2, Individual<N>& c1, Individual<N>& c2, int n) {
+    void crossover(SgaIndividual<N>& p1, SgaIndividual<N>& p2, SgaIndividual<N>& c1, SgaIndividual<N>& c2, int n) {
       uniform_int_distribution<size_t> randInt(1, N-1);
       n = std::min(n, (int)(N-1));
 
@@ -224,7 +242,7 @@ class SingleObjectiveGA {
 
       vector<int> points(pointSet.begin(), pointSet.end()); // already sorted
 
-      vector<Individual<N>> parents = {p1, p2};
+      vector<SgaIndividual<N>> parents = {p1, p2};
       bitset<N> cGene1, cGene2;
 
       size_t j = 0;
@@ -250,13 +268,13 @@ class SingleObjectiveGA {
     void init() {
       for (int i = 0; i < this->popSize; i++) {
         bitset<N> gene = this->randomGene();
-        population.push_back(Individual<N>(gene, landscape->fitness(gene)));
+        population.push_back(SgaIndividual<N>(gene, landscape->fitness(gene)));
       }
     }
 
-    void chooseElites(vector<Individual<N>> &newPop) {
+    void chooseElites(vector<SgaIndividual<N>> &newPop) {
       sort(this->population.begin(), this->population.end(), 
-          [](Individual<N> a, Individual<N> b){
+          [](SgaIndividual<N> a, SgaIndividual<N> b){
           return a.getFitness() < b.getFitness();
           });
       newPop.insert(
@@ -266,13 +284,13 @@ class SingleObjectiveGA {
           );
     }
 
-    void crowdingSelection(Individual<N> p1, Individual<N> p2, Individual<N> c1, Individual<N> c2, vector<Individual<N>> &res) {
+    void crowdingSelection(SgaIndividual<N> p1, SgaIndividual<N> p2, SgaIndividual<N> c1, SgaIndividual<N> c2, vector<SgaIndividual<N>> &res) {
       uniform_real_distribution<double> randDouble(0.0, 1.0);
       // Group by Hamming distance
       // Compete with parents
       // Find winners based on prob or det crowding
-      Individual<N> o1;
-      Individual<N> o2;
+      SgaIndividual<N> o1;
+      SgaIndividual<N> o2;
 
       if (hammingDist(p1, c1) + hammingDist(p2, c2) <= hammingDist(p1, c2) + hammingDist(p2, c1)) {
         // (P1, C1) and (P2, C2) are the optimal pairings that minimize dist
@@ -290,20 +308,25 @@ class SingleObjectiveGA {
       res.push_back(winner2); 
     }
 
-    Individual<N> run(bool verbose = true) {
+    SgaIndividual<N> run(bool verbose = true) {
       if (verbose) {
         cout << "Running algorithm..." << endl;
+        if (!outputDir_.empty()) {
+          std::error_code ec;
+          std::filesystem::create_directories(outputDir_, ec);
+          std::filesystem::create_directories(outputDir_ + "/anim", ec);
+        }
       }
       uniform_int_distribution<size_t> dist(0, this->popSize-1);
       uniform_real_distribution<double> randDouble(0.0, 1.0);
 
       // Init solution random to avoid nullptr issues
       auto temp = this->randomGene();
-      Individual<N> solution(temp);
+      SgaIndividual<N> solution(temp);
       solution.setFitness(landscape->fitness(temp));
 
       for (int i = 0; i < this->generations; i++) {
-        vector<Individual<N>> newPop;
+        vector<SgaIndividual<N>> newPop;
 
         // Elite selection
         int newPopSize = this->numberOfElites;
@@ -325,8 +348,8 @@ class SingleObjectiveGA {
           size_t second = tournamentSelect();
 
           // Crossover to create 2 kids
-          Individual<N> c1;
-          Individual<N> c2;
+          SgaIndividual<N> c1;
+          SgaIndividual<N> c2;
           auto p1 = this->population[best];
           auto p2 = this->population[second];
           if (randDouble(gen) < this->crossoverRate) {
@@ -343,7 +366,7 @@ class SingleObjectiveGA {
           c1.setFitness(landscape->fitness(c1.getGene()));
           c2.setFitness(landscape->fitness(c2.getGene()));
 
-          vector<Individual<N>> winners;
+          vector<SgaIndividual<N>> winners;
           this->crowdingSelection(p1, p2, c1, c2, winners);
 
           newPop.insert(newPop.end(), winners.begin(), winners.end());
@@ -377,7 +400,7 @@ class SingleObjectiveGA {
         if (maxFitness >= solution.getFitness()) {
           for (auto const &c : this->population) {
             if (c.getFitness() == maxFitness) {
-              solution = Individual<N>(c.getGene());
+              solution = SgaIndividual<N>(c.getGene());
               solution.setFitness(landscape->fitness(c.getGene()));
             }
           }
@@ -386,18 +409,18 @@ class SingleObjectiveGA {
       return solution;
     }
 
-    vector<vector<Individual<N>>> findNiches() {
-      vector<Individual<N>> popCopy = population;
-      vector<vector<Individual<N>>> niches;
+    vector<vector<SgaIndividual<N>>> findNiches() {
+      vector<SgaIndividual<N>> popCopy = population;
+      vector<vector<SgaIndividual<N>>> niches;
 
       while (!popCopy.empty()) {
         auto bestIt = std::max_element(popCopy.begin(), popCopy.end(),
-            [](const Individual<N>& a, const Individual<N>& b) {
+            [](const SgaIndividual<N>& a, const SgaIndividual<N>& b) {
             return a.getFitness() < b.getFitness();
             });
 
-        vector<Individual<N>> niche;
-        Individual<N> best = *bestIt;
+        vector<SgaIndividual<N>> niche;
+        SgaIndividual<N> best = *bestIt;
         popCopy.erase(bestIt);
         niche.push_back(best);
 
