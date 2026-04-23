@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,35 @@
 namespace {
 
 bool isPowerOfTwo(std::size_t x) { return x != 0 && (x & (x - 1)) == 0; }
+
+struct PsoHyperParams {
+  std::optional<int> swarm_size;
+  std::optional<int> iterations;
+  std::optional<double> w_start;
+  std::optional<double> w_end;
+  std::optional<double> c1;
+  std::optional<double> c2;
+  std::optional<double> v_max;
+  std::optional<double> mut_start;
+  std::optional<double> mut_end;
+};
+
+template <std::size_t N>
+typename BinaryPSO<N>::Config makePsoConfig(unsigned seed,
+                                              const PsoHyperParams& h) {
+  typename BinaryPSO<N>::Config cfg;
+  cfg.seed = seed;
+  if (h.swarm_size) cfg.swarm_size = *h.swarm_size;
+  if (h.iterations) cfg.iterations = *h.iterations;
+  if (h.w_start) cfg.w_start = *h.w_start;
+  if (h.w_end) cfg.w_end = *h.w_end;
+  if (h.c1) cfg.c1 = *h.c1;
+  if (h.c2) cfg.c2 = *h.c2;
+  if (h.v_max) cfg.v_max = *h.v_max;
+  if (h.mut_start) cfg.mut_start = *h.mut_start;
+  if (h.mut_end) cfg.mut_end = *h.mut_end;
+  return cfg;
+}
 
 std::size_t inferFeatureCountFromFile(
     const std::string& hdf5_path,
@@ -185,11 +215,11 @@ template <std::size_t N>
 void runPSO_HDF5(const std::string& hdf5_path,
                  const std::string& out_prefix,
                  double epsilon, unsigned seed,
+                 const PsoHyperParams& hyper,
                  bool lite) {
   HDF5Landscape<N> landscape(hdf5_path, epsilon, true);
 
-  typename BinaryPSO<N>::Config cfg;
-  cfg.seed = seed;
+  typename BinaryPSO<N>::Config cfg = makePsoConfig<N>(seed, hyper);
 
   BinaryPSO<N> pso(
       [&landscape](const std::bitset<N>& chr) -> PSOEvalResult {
@@ -216,11 +246,11 @@ template <std::size_t N>
 void runPSO_Triangle(const std::string& out_prefix,
                      int m, int s,
                      double epsilon, unsigned seed,
+                     const PsoHyperParams& hyper,
                      bool lite) {
   TriangleLandscape<N> landscape(m, s, epsilon);
 
-  typename BinaryPSO<N>::Config cfg;
-  cfg.seed = seed;
+  typename BinaryPSO<N>::Config cfg = makePsoConfig<N>(seed, hyper);
 
   BinaryPSO<N> pso(
       [&landscape](const std::bitset<N>& chr) -> PSOEvalResult {
@@ -444,6 +474,7 @@ struct Args {
   double epsilon = 0.1;
   unsigned seed = 42;
   int stats_run = -1;
+  PsoHyperParams pso;
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -474,6 +505,24 @@ Args parseArgs(int argc, char** argv) {
       args.epsilon = std::stod(argv[++i]);
     } else if (arg == "--seed" && i + 1 < argc) {
       args.seed = static_cast<unsigned>(std::stoul(argv[++i]));
+    } else if (arg == "--pso-swarm" && i + 1 < argc) {
+      args.pso.swarm_size = std::stoi(argv[++i]);
+    } else if (arg == "--pso-iters" && i + 1 < argc) {
+      args.pso.iterations = std::stoi(argv[++i]);
+    } else if (arg == "--pso-w-start" && i + 1 < argc) {
+      args.pso.w_start = std::stod(argv[++i]);
+    } else if (arg == "--pso-w-end" && i + 1 < argc) {
+      args.pso.w_end = std::stod(argv[++i]);
+    } else if (arg == "--pso-c1" && i + 1 < argc) {
+      args.pso.c1 = std::stod(argv[++i]);
+    } else if (arg == "--pso-c2" && i + 1 < argc) {
+      args.pso.c2 = std::stod(argv[++i]);
+    } else if (arg == "--pso-vmax" && i + 1 < argc) {
+      args.pso.v_max = std::stod(argv[++i]);
+    } else if (arg == "--pso-mut-start" && i + 1 < argc) {
+      args.pso.mut_start = std::stod(argv[++i]);
+    } else if (arg == "--pso-mut-end" && i + 1 < argc) {
+      args.pso.mut_end = std::stod(argv[++i]);
     } else if (arg[0] != '-') {
       args.hdf5_path = arg;
     }
@@ -489,14 +538,14 @@ void dispatch(const Args& args) {
   if (args.run_triangle) {
     if (args.run_pso)
       runPSO_Triangle<N>(prefix.empty() ? "output/triangle" : prefix,
-                         1, 4, eps, args.seed, lite);
+                         1, 4, eps, args.seed, args.pso, lite);
     else
       runNSGA2_Triangle<N>(prefix.empty() ? "output/triangle" : prefix,
                            1, 4, eps, args.seed, lite);
   } else if (args.run_pso) {
     runPSO_HDF5<N>(args.hdf5_path,
                    prefix.empty() ? "output/pso" : prefix,
-                   eps, args.seed, lite);
+                   eps, args.seed, args.pso, lite);
   } else if (args.run_nsga2) {
     runNSGA2_HDF5<N>(args.hdf5_path,
                      prefix.empty() ? "output/nsga2" : prefix,
