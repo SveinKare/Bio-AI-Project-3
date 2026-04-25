@@ -31,9 +31,13 @@ def main():
     g["std_scalar_fitness"] = g["std_scalar_fitness"].fillna(0.0)
 
     algo_order = ["nsga2", "pso", "sga"]
-    case_order = ["breast", "credit", "letter", "triangle"]
-    g["algorithm"] = pd.Categorical(g["algorithm"], algo_order, ordered=True)
-    g["case"] = pd.Categorical(g["case"], case_order, ordered=True)
+    case_order = ["breast", "credit", "letter", "triangle",
+                  "zoo", "hepatitis", "asym-triangle"]
+    known_algos = [a for a in algo_order if a in g["algorithm"].values]
+    known_cases = [c for c in case_order if c in g["case"].values]
+    extra_cases = [c for c in g["case"].unique() if c not in case_order]
+    g["algorithm"] = pd.Categorical(g["algorithm"], known_algos, ordered=True)
+    g["case"] = pd.Categorical(g["case"], known_cases + extra_cases, ordered=True)
     g = g.sort_values(["case", "algorithm"]).reset_index(drop=True)
 
     if args.out_csv:

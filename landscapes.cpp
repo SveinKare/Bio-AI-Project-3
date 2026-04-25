@@ -276,3 +276,39 @@ class TriangleLandscape : public Landscape<N> {
     return compute(gene);
   }
 };
+
+// ── Asymmetric Triangle Landscape (popcount-based lookup) ───────────────────
+
+template <size_t N>
+class AsymmetricTriangleLandscape : public Landscape<N> {
+ private:
+  vector<double> fitness_by_popcount_;
+  double epsilon;
+
+ public:
+  AsymmetricTriangleLandscape(vector<double> fitness_by_popcount, double epsilon)
+      : fitness_by_popcount_(std::move(fitness_by_popcount)), epsilon(epsilon) {
+    if (fitness_by_popcount_.size() != N + 1) {
+      throw std::runtime_error(
+          "AsymmetricTriangleLandscape: fitness_by_popcount must have N+1=" +
+          std::to_string(N + 1) + " entries, got " +
+          std::to_string(fitness_by_popcount_.size()));
+    }
+  }
+
+  static vector<double> testTriangleFitness() {
+    // n=31, s=5 (s=4 from bits 26), m=1 (m=5 from bits 30)
+    return {0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+            0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+            0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+            0, 6};
+  }
+
+  Fitness fitness(bitset<N> gene) const override {
+    int nFeatures = static_cast<int>(gene.count());
+    double penalty = (static_cast<double>(nFeatures) / N) * epsilon;
+    return {fitness_by_popcount_[nFeatures], 0.0, penalty};
+  }
+
+  const vector<double>& fitnessByPopcount() const { return fitness_by_popcount_; }
+};

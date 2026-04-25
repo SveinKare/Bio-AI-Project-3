@@ -311,9 +311,58 @@ def generate_triangle_csv(n: int, m: int, s: int, csv_path: str) -> str:
     return csv_path
 
 
+# ── Asymmetric Triangle landscape ────────────────────────────────────────────
+
+ASYM_TRIANGLE_FITNESS = [
+    0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+    0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+    0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+    0, 6,
+]
+ASYM_TRIANGLE_N = 31
+
+
+def asym_triangle_fitness(b: int) -> float:
+    """Fitness for the asymmetric triangle by popcount."""
+    return float(ASYM_TRIANGLE_FITNESS[b])
+
+
+def generate_asym_triangle_csv_sampled(
+    csv_path: str, sample_size: int = 100_000, seed: int = 42
+) -> str:
+    """Generate a sampled CSV for the N=31 asymmetric triangle landscape."""
+    rng = np.random.RandomState(seed)
+    n = ASYM_TRIANGLE_N
+    total = 1 << n
+
+    indices = set()
+    while len(indices) < sample_size:
+        batch = rng.randint(0, total, size=min(sample_size * 2, total))
+        indices.update(batch.tolist())
+        if len(indices) >= sample_size:
+            break
+    indices = sorted(list(indices)[:sample_size])
+
+    rows = []
+    for idx in indices:
+        b = bin(idx).count("1")
+        fit = asym_triangle_fitness(b)
+        bitmask = format(idx, f"0{n}b")
+        rows.append((idx, bitmask, b, fit, 0.0))
+
+    df = pd.DataFrame(rows, columns=["index", "bitmask", "num_features",
+                                      "mean_accuracy", "mean_time"])
+    os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+    df.to_csv(csv_path, index=False)
+    print(f"  Generated asymmetric triangle landscape CSV (sampled): {csv_path}")
+    print(f"    n={n}, sample_size={len(df)}")
+    return csv_path
+
+
 # ── Per-file driver ──────────────────────────────────────────────────────────
 
-def visualise(csv_path: str, save_dir: str | None):
+def visualise(csv_path: str, save_dir: str | None, is_sampled: bool = False,
+              override_n: int | None = None):
     df = pd.read_csv(csv_path)
     for col in ("index", "num_features", "mean_accuracy"):
         if col not in df.columns:
@@ -321,8 +370,12 @@ def visualise(csv_path: str, save_dir: str | None):
     if "mean_time" not in df.columns:
         df["mean_time"] = 0.0
 
-    n_features = int(np.log2(df["index"].max() + 1))
-    print(f"  {os.path.basename(csv_path)}: {len(df)} combinations, "
+    if override_n is not None:
+        n_features = override_n
+    else:
+        n_features = int(np.ceil(np.log2(df["index"].max() + 1)))
+    sampled_tag = " (sampled)" if is_sampled else ""
+    print(f"  {os.path.basename(csv_path)}: {len(df)} combinations{sampled_tag}, "
           f"N={n_features}")
 
     lo_mask = find_local_optima(df, n_features, include_plateaus=False)
@@ -332,7 +385,7 @@ def visualise(csv_path: str, save_dir: str | None):
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     stem = os.path.basename(csv_path).replace(".csv", "")
-    fig.suptitle(f"{stem}   (N={n_features},  {n_lo} local optima)",
+    fig.suptitle(f"{stem}   (N={n_features},  {n_lo} local optima{sampled_tag})",
                  fontsize=16, fontweight="bold")
 
     plot_fitness_vs_features(df, lo_mask, axes[0, 0])
@@ -351,7 +404,13 @@ def visualise(csv_path: str, save_dir: str | None):
     else:
         plt.show()
 
-    plot_3d_bitstring_map(df, lo_mask, n_features, stem, n_lo, save_dir)
+    max_3d_bits = 19
+    if n_features <= max_3d_bits and not is_sampled:
+        plot_3d_bitstring_map(df, lo_mask, n_features, stem, n_lo, save_dir)
+    else:
+        print(f"    Skipping 3D bitstring map (N={n_features}"
+              f"{', sampled data' if is_sampled else ''}"
+              f" — grid would be too large)")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -372,9 +431,15 @@ def main():
                         help="Triangle landscape: m parameter (default 1)")
     parser.add_argument("--tri-s", type=int, default=4,
                         help="Triangle landscape: s parameter (default 4)")
+    parser.add_argument("--asym-triangle", action="store_true",
+                        help="Generate and visualise the asymmetric triangle "
+                             "landscape (n=31, sample-based)")
+    parser.add_argument("--sample-size", type=int, default=100_000,
+                        help="Sample size for large landscapes (default 100000)")
     args = parser.parse_args()
 
     csv_files = list(args.csv) if args.csv else []
+    sampled_csvs: dict[str, int] = {}
 
     if args.triangle:
         out_dir = args.save or "output"
@@ -383,12 +448,22 @@ def main():
         generate_triangle_csv(args.tri_n, args.tri_m, args.tri_s, tri_csv)
         csv_files.append(tri_csv)
 
+    if args.asym_triangle:
+        out_dir = args.save or "output"
+        asym_csv = os.path.join(out_dir, "asym_triangle_n31.csv")
+        generate_asym_triangle_csv_sampled(asym_csv, args.sample_size)
+        csv_files.append(asym_csv)
+        sampled_csvs[asym_csv] = ASYM_TRIANGLE_N
+
     if not csv_files:
-        parser.error("Provide at least one CSV or use --triangle")
+        parser.error("Provide at least one CSV or use --triangle / --asym-triangle")
 
     for csv_path in csv_files:
         print(f"Processing {csv_path} ...")
-        visualise(csv_path, args.save)
+        override_n = sampled_csvs.get(csv_path)
+        visualise(csv_path, args.save,
+                  is_sampled=(csv_path in sampled_csvs),
+                  override_n=override_n)
 
 
 if __name__ == "__main__":
