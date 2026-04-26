@@ -1,0 +1,2 @@
+algorithm,case,bitstring,n_features,accuracy,second_objective
+sga,letter,0000000111111111,9,0.947344,0.891094

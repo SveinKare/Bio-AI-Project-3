@@ -1,0 +1,10 @@
+algorithm,case,n_runs,mean_scalar_fitness,std_scalar_fitness,mean_accuracy
+nsga2,zoo,2,0.935417,0.0,0.979167
+pso,zoo,2,0.936458,0.0,0.973958
+sga,zoo,2,0.9302079999999999,0.008838834764831853,0.964583
+nsga2,hepatitis,2,0.9085799999999999,0.0036826121164194934,0.934896
+pso,hepatitis,2,0.911184,0.0,0.9375
+sga,hepatitis,2,0.9052975,0.008324768134909248,0.934245
+nsga2,asym-triangle,2,4.98387,0.0,5.0
+pso,asym-triangle,2,4.98387,0.0,5.0
+sga,asym-triangle,2,4.95161,0.0,5.0

@@ -61,14 +61,9 @@ class BinaryPSO {
     double v_max = 6.0;
     unsigned seed = 42;
 
-    // Mutation decays linearly from mut_start to mut_end (parameter control).
-    // If diversity drops below diversity_low, mutation is boosted to prevent
-    // premature convergence (adaptive parameter control).
+    // Mutation decays linearly from mut_start to mut_end each iteration.
     double mut_start = 1.0 / static_cast<double>(N);
     double mut_end = 0.0;
-    double diversity_low = 0.25;
-    double mutation_boost = 1.5;
-    double mutation_max = 0.5;
   };
 
   using EvalFn = std::function<PSOEvalResult(const std::bitset<N>&)>;
@@ -82,8 +77,6 @@ class BinaryPSO {
     initializePersonalBests();
     findGlobalBest();
 
-    double current_mut = cfg_.mut_start;
-
     for (int iter = 0; iter < cfg_.iterations; ++iter) {
       double t = (cfg_.iterations > 1)
           ? static_cast<double>(iter) /
@@ -91,29 +84,23 @@ class BinaryPSO {
           : 0.0;
 
       double w = cfg_.w_start + t * (cfg_.w_end - cfg_.w_start);
-      double scheduled_mut = cfg_.mut_start + t * (cfg_.mut_end - cfg_.mut_start);
+      const double mutation_rate =
+          cfg_.mut_start + t * (cfg_.mut_end - cfg_.mut_start);
 
       for (auto& p : swarm_) {
         updateVelocity(p, w);
         updatePosition(p);
-        mutate(p, current_mut);
+        mutate(p, mutation_rate);
       }
 
       evaluate(swarm_);
       updatePersonalBests();
       findGlobalBest();
 
-      double div = measureDiversity();
-
-      if (div < cfg_.diversity_low) {
-        current_mut = std::min(current_mut * cfg_.mutation_boost,
-                               cfg_.mutation_max);
-      } else {
-        current_mut = std::max(scheduled_mut, current_mut * 0.95);
-      }
+      const double div = measureDiversity();
 
       assignRanksForOutput();
-      iter_stats_.push_back(computeStats(iter, div, current_mut));
+      iter_stats_.push_back(computeStats(iter, div, mutation_rate));
       snapshots_.push_back(swarm_);
     }
   }

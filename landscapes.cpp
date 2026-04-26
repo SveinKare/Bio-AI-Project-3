@@ -221,25 +221,94 @@ class TriangleLandscape : public Landscape<N> {
   int m;
   int s;
   double epsilon;
+  bool precomputed = false;
+  vector<Fitness> table;
+
+  Fitness compute(bitset<N> gene) const {
+    int b = gene.count();
+    int ceil = (b + s - 1) / s;
+    int nFeatures = gene.count();
+    double penalty = ((double)nFeatures / N) * epsilon;
+    if (ceil % 2 == 1) {
+      if (b % s == 0) {
+        return {(double)(m * s), 0.0, penalty};
+      }
+      return {(double)(m * (b % s)), 0.0, penalty};
+    }
+    return {(double)(m * (ceil * s - b)), 0.0, penalty};
+  }
 
  public:
   TriangleLandscape(int m, int s, double epsilon) : m(m), s(s), epsilon(epsilon) {}
 
-  Fitness fitness(bitset<N> gene) const override {
-    int b = gene.count();
-    int ceil = (b + s - 1) / s;
+  void precompute(const string& path = "data/triangle.csv") {
+    const size_t total = size_t{1} << N;
+    table.resize(total);
 
-    int nFeatures = gene.count();
-    double penalty = ((double) nFeatures/N) * epsilon;
-
-    if (ceil % 2 == 1) {
-      if (b % s == 0) {
-        return {static_cast<double>(m * s), 0.0, penalty};
-      } else {
-        return {static_cast<double>(m * (b % s)), 0.0, penalty};
+    std::ifstream in(path);
+    if (in.good()) {
+      string header;
+      std::getline(in, header);
+      size_t idx;
+      double acc, penalty;
+      char comma;
+      while (in >> idx >> comma >> acc >> comma >> penalty) {
+        table[idx] = {acc, 0.0, penalty};
       }
+      in.close();
     } else {
-      return {static_cast<double>(m * (ceil * s - b)), 0.0, penalty};
+      std::ofstream out(path);
+      out << "index,accuracy,penalty" << std::endl;
+      for (size_t i = 0; i < total; i++) {
+        bitset<N> gene(i);
+        table[i] = compute(gene);
+        out << i << "," << table[i].accuracy << "," << table[i].penalty << std::endl;
+      }
+      out.close();
+    }
+    precomputed = true;
+  }
+
+  Fitness fitness(bitset<N> gene) const override {
+    if (precomputed) {
+      return table[gene.to_ulong()];
+    }
+    return compute(gene);
+  }
+};
+
+// ── Asymmetric Triangle Landscape (popcount-based lookup) ───────────────────
+
+template <size_t N>
+class AsymmetricTriangleLandscape : public Landscape<N> {
+ private:
+  vector<double> fitness_by_popcount_;
+  double epsilon;
+
+ public:
+  AsymmetricTriangleLandscape(vector<double> fitness_by_popcount, double epsilon)
+      : fitness_by_popcount_(std::move(fitness_by_popcount)), epsilon(epsilon) {
+    if (fitness_by_popcount_.size() != N + 1) {
+      throw std::runtime_error(
+          "AsymmetricTriangleLandscape: fitness_by_popcount must have N+1=" +
+          std::to_string(N + 1) + " entries, got " +
+          std::to_string(fitness_by_popcount_.size()));
     }
   }
+
+  static vector<double> testTriangleFitness() {
+    // n=31, s=5 (s=4 from bits 26), m=1 (m=5 from bits 30)
+    return {0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+            0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+            0, 1, 2, 3, 4, 5, 4, 3, 2, 1,
+            0, 6};
+  }
+
+  Fitness fitness(bitset<N> gene) const override {
+    int nFeatures = static_cast<int>(gene.count());
+    double penalty = (static_cast<double>(nFeatures) / N) * epsilon;
+    return {fitness_by_popcount_[nFeatures], 0.0, penalty};
+  }
+
+  const vector<double>& fitnessByPopcount() const { return fitness_by_popcount_; }
 };

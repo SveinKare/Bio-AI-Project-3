@@ -1,0 +1,2 @@
+run_index,seed,algorithm,case,bitstring,n_features,accuracy,second_objective,scalar_fitness
+38,45,pso,run_0038,010001000,2,0.95564,0.0887217,0.933418
